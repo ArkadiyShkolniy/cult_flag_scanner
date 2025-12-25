@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  # Дашборд сложного флага
+  complex-flag-dashboard:
+    build: .
+    container_name: complex-flag-dashboard
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    command: ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.enableCORS=false", "--server.enableXsrfProtection=false"]
+    restart: unless-stopped
+
+  # Фоновый сканер сложного флага
+  complex-flag-worker:
+    build: .
+    container_name: complex-flag-worker
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["python", "service.py"]
+    restart: unless-stopped

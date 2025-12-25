@@ -1,0 +1,6 @@
+t-tech-investments
+pandas
+numpy
+python-dotenv
+streamlit
+plotly
