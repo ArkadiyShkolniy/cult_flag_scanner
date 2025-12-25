@@ -2,6 +2,9 @@
 
 Проект для поиска и анализа паттернов "Флаг" со структурой 0-1-2-3-4 на финансовых рынках.
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ## Описание
 
 Сканер ищет два типа паттернов:
@@ -126,6 +129,24 @@ docker-compose up -d
 - **T4**: Второй откат (High, <= T2)
 - **Пробой**: Цена пробивает линию поддержки T1-T3 вниз
 
+## Разработка
+
+### Структура проекта
+
+См. [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) для детальной информации о структуре проекта.
+
+### Установка для разработки
+
+```bash
+git clone https://github.com/YOUR_USERNAME/complex-flag-scanner.git
+cd complex-flag-scanner
+pip install -r requirements.txt
+```
+
 ## Лицензия
 
-MIT
+MIT License
+
+## Автор
+
+Разработано для анализа технических паттернов на финансовых рынках.
