@@ -42,167 +42,10 @@ if 'df_data' not in st.session_state:
 if 'pattern_type' not in st.session_state:
     st.session_state.pattern_type = 'bullish'  # bullish или bearish
 
-# --- Боковая панель ---
-with st.sidebar:
-    st.header("⚙️ Настройки")
-    
-    # Выбор инструмента
-    ticker = st.text_input("Тикер", value="VKCO")
-    class_code = st.selectbox("Class Code", ["TQBR", "SPBFUT", "FUT"], index=0)
-    
-    # Выбор таймфрейма
-    selected_timeframe = st.selectbox(
-        "Таймфрейм",
-        options=list(TIMEFRAMES.keys()),
-        format_func=lambda x: TIMEFRAMES[x]['title'],
-        index=1
-    )
-    tf_config = TIMEFRAMES[selected_timeframe]
-    
-    # Количество дней истории
-    days_back = st.slider("Дней истории", 1, max(30, tf_config['days_back']), 
-                         min(10, tf_config['days_back']))
-    
-    # Кнопка загрузки данных
-    if st.button("📥 Загрузить данные", type="primary"):
-        with st.spinner("Загрузка данных..."):
-            try:
-                df = scanner.get_candles_df(
-                    ticker, 
-                    class_code, 
-                    days_back=days_back,
-                    interval=tf_config['interval']
-                )
-                
-                if not df.empty:
-                    st.session_state.df_data = df
-                    st.session_state.points = {}  # Сбрасываем точки
-                    st.session_state.current_ticker = ticker  # Сохраняем для сохранения
-                    st.session_state.current_timeframe = selected_timeframe  # Сохраняем для сохранения
-                    st.success(f"✅ Загружено {len(df)} свечей")
-                else:
-                    st.error("❌ Данные не загружены")
-            except Exception as e:
-                st.error(f"❌ Ошибка загрузки: {e}")
-    
-    st.divider()
-    
-    # Тип паттерна
-    st.subheader("Тип паттерна")
-    pattern_type = st.radio(
-        "Выберите тип",
-        ["Бычий (Bullish)", "Медвежий (Bearish)"],
-        index=0 if st.session_state.pattern_type == 'bullish' else 1,
-        key='pattern_type_radio'
-    )
-    st.session_state.pattern_type = 'bullish' if 'Бычий' in pattern_type else 'bearish'
-    
-    st.divider()
-    
-    # Инструкции
-    with st.expander("📖 Инструкция"):
-        st.markdown("""
-        **Как размечать паттерн:**
-        
-        1. Загрузите данные (выберите тикер и нажмите "Загрузить данные")
-        2. На графике кликните по свечам чтобы отметить точки:
-           - **T0**: Начало паттерна (низ для бычьего, верх для медвежьего)
-           - **T1**: Вершина/дно флагштока
-           - **T2**: Первый откат
-           - **T3**: Второй пик/дно
-           - **T4**: Второй откат (финальная точка)
-        3. Точки отмечаются последовательно: T0 → T1 → T2 → T3 → T4
-        4. После отметки всех точек нажмите "Сохранить для обучения"
-        
-        **Важно:** Отмечайте точки в хронологическом порядке!
-        """)
-    
-    st.divider()
-    
-    # Кнопки управления
-    if st.button("🗑️ Очистить точки"):
-        st.session_state.points = {}
-        st.rerun()
-    
-    if st.button("💾 Сохранить для обучения", type="primary", disabled=len(st.session_state.points) < 5):
-        if len(st.session_state.points) == 5:
-            save_annotation()
-        else:
-            st.warning("⚠️ Отметьте все 5 точек!")
 
-# --- Основная область ---
-
-if st.session_state.df_data is None:
-    st.info("👈 Выберите инструмент и таймфрейм в боковой панели, затем нажмите 'Загрузить данные'")
-else:
-    df = st.session_state.df_data
-    
-    # Получаем сохраненные значения для использования в функциях
-    current_ticker = st.session_state.get('current_ticker', ticker)
-    current_timeframe = st.session_state.get('current_timeframe', selected_timeframe)
-    
-    # Создаем график
-    fig = create_interactive_chart(df, st.session_state.points, st.session_state.pattern_type, current_ticker, current_timeframe)
-    
-    # Обработка кликов
-    selected_points = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="chart")
-    
-    # Обрабатываем выбранные точки
-    if selected_points and 'selection' in selected_points and selected_points['selection']['points']:
-        process_point_selection(selected_points['selection']['points'], df)
-    
-    # Показываем статус разметки
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        status_t0 = "✅" if 'T0' in st.session_state.points else "⏳"
-        st.metric("T0", status_t0)
-    with col2:
-        status_t1 = "✅" if 'T1' in st.session_state.points else "⏳"
-        st.metric("T1", status_t1)
-    with col3:
-        status_t2 = "✅" if 'T2' in st.session_state.points else "⏳"
-        st.metric("T2", status_t2)
-    
-    col4, col5 = st.columns(2)
-    with col4:
-        status_t3 = "✅" if 'T3' in st.session_state.points else "⏳"
-        st.metric("T3", status_t3)
-    with col5:
-        status_t4 = "✅" if 'T4' in st.session_state.points else "⏳"
-        st.metric("T4", status_t4)
-    
-    # Показываем информацию о точках
-    if st.session_state.points:
-        st.subheader("📍 Отмеченные точки")
-        points_df = pd.DataFrame([
-            {
-                'Точка': point_name,
-                'Индекс': point_data['idx'],
-                'Цена': f"{point_data['price']:.2f}",
-                'Время': str(point_data['time'])
-            }
-            for point_name, point_data in sorted(st.session_state.points.items())
-        ])
-        st.dataframe(points_df, use_container_width=True, hide_index=True)
-    
-    # Статистика аннотаций
-    with st.expander("📊 Статистика размеченных данных"):
-        try:
-            stats = annotator.get_statistics()
-            if stats['total'] > 0:
-                st.write(f"**Всего размечено:** {stats['total']}")
-                st.write("**По меткам:**")
-                for label, count in stats['by_label'].items():
-                    label_name = {0: 'Нет паттерна', 1: 'Бычий', 2: 'Медвежий'}.get(label, f'Unknown({label})')
-                    st.write(f"  - {label_name}: {count}")
-                st.write("**По таймфреймам:**")
-                for tf, count in stats['by_timeframe'].items():
-                    st.write(f"  - {tf}: {count}")
-            else:
-                st.info("Пока нет размеченных данных")
-        except Exception as e:
-            st.info(f"Статистика пока недоступна: {e}")
-
+# ============================================================================
+# ФУНКЦИИ (определяем до использования)
+# ============================================================================
 
 def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'):
     """Создает интерактивный график с возможностью отмечать точки"""
@@ -356,7 +199,7 @@ def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'
         if pd.isna(time_val):
             tick_times.append('')
         elif isinstance(time_val, pd.Timestamp):
-            if selected_timeframe == '1d':
+            if timeframe == '1d':
                 tick_times.append(time_val.strftime('%Y-%m-%d'))
             else:
                 tick_times.append(time_val.strftime('%Y-%m-%d %H:%M'))
@@ -519,3 +362,235 @@ def save_annotation():
         import traceback
         st.code(traceback.format_exc())
 
+
+# ============================================================================
+# ОСНОВНОЙ КОД
+# ============================================================================
+
+# --- Боковая панель ---
+with st.sidebar:
+    st.header("⚙️ Настройки")
+    
+    # Выбор инструмента
+    ticker = st.text_input("Тикер", value="VKCO")
+    class_code = st.selectbox("Class Code", ["TQBR", "SPBFUT", "FUT"], index=0)
+    
+    # Выбор таймфрейма
+    selected_timeframe = st.selectbox(
+        "Таймфрейм",
+        options=list(TIMEFRAMES.keys()),
+        format_func=lambda x: TIMEFRAMES[x]['title'],
+        index=1
+    )
+    tf_config = TIMEFRAMES[selected_timeframe]
+    
+    # Количество дней истории
+    days_back = st.slider("Дней истории", 1, max(30, tf_config['days_back']), 
+                         min(10, tf_config['days_back']))
+    
+    # Кнопка загрузки данных
+    if st.button("📥 Загрузить данные", type="primary"):
+        with st.spinner("Загрузка данных..."):
+            try:
+                df = scanner.get_candles_df(
+                    ticker, 
+                    class_code, 
+                    days_back=days_back,
+                    interval=tf_config['interval']
+                )
+                
+                if not df.empty:
+                    st.session_state.df_data = df
+                    st.session_state.points = {}  # Сбрасываем точки
+                    st.session_state.current_ticker = ticker  # Сохраняем для сохранения
+                    st.session_state.current_timeframe = selected_timeframe  # Сохраняем для сохранения
+                    st.success(f"✅ Загружено {len(df)} свечей")
+                else:
+                    st.error("❌ Данные не загружены")
+            except Exception as e:
+                st.error(f"❌ Ошибка загрузки: {e}")
+    
+    st.divider()
+    
+    # Тип паттерна
+    st.subheader("Тип паттерна")
+    pattern_type = st.radio(
+        "Выберите тип",
+        ["Бычий (Bullish)", "Медвежий (Bearish)"],
+        index=0 if st.session_state.pattern_type == 'bullish' else 1,
+        key='pattern_type_radio'
+    )
+    st.session_state.pattern_type = 'bullish' if 'Бычий' in pattern_type else 'bearish'
+    
+    st.divider()
+    
+    # Инструкции
+    with st.expander("📖 Инструкция"):
+        st.markdown("""
+        **Как размечать паттерн:**
+        
+        1. Загрузите данные (выберите тикер и нажмите "Загрузить данные")
+        2. На графике кликните по свечам чтобы отметить точки:
+           - **T0**: Начало паттерна (низ для бычьего, верх для медвежьего)
+           - **T1**: Вершина/дно флагштока
+           - **T2**: Первый откат
+           - **T3**: Второй пик/дно
+           - **T4**: Второй откат (финальная точка)
+        3. Точки отмечаются последовательно: T0 → T1 → T2 → T3 → T4
+        4. После отметки всех точек нажмите "Сохранить для обучения"
+        
+        **Важно:** Отмечайте точки в хронологическом порядке!
+        """)
+    
+    st.divider()
+    
+    # Кнопки управления
+    if st.button("🗑️ Очистить точки"):
+        st.session_state.points = {}
+        st.rerun()
+    
+    if st.button("💾 Сохранить для обучения", type="primary", disabled=len(st.session_state.points) < 5):
+        if len(st.session_state.points) == 5:
+            save_annotation()
+        else:
+            st.warning("⚠️ Отметьте все 5 точек!")
+
+# --- Основная область ---
+
+if st.session_state.df_data is None:
+    st.info("👈 Выберите инструмент и таймфрейм в боковой панели, затем нажмите 'Загрузить данные'")
+else:
+    df = st.session_state.df_data
+    
+    # Получаем сохраненные значения для использования в функциях
+    current_ticker = st.session_state.get('current_ticker', ticker)
+    current_timeframe = st.session_state.get('current_timeframe', selected_timeframe)
+    
+    # Создаем график
+    fig = create_interactive_chart(df, st.session_state.points, st.session_state.pattern_type, current_ticker, current_timeframe)
+    
+    # Кнопки для отметки точек (альтернатива клику на графике)
+    st.subheader("📍 Отметка точек")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        if st.button("T0", disabled='T0' in st.session_state.points):
+            st.session_state.points['T0'] = None  # Заполнится при выборе
+            st.info("Кликните на графике по начальной точке (T0)")
+    with col2:
+        if st.button("T1", disabled='T1' in st.session_state.points):
+            st.session_state.points['T1'] = None
+            st.info("Кликните на графике по точке T1")
+    with col3:
+        if st.button("T2", disabled='T2' in st.session_state.points):
+            st.session_state.points['T2'] = None
+            st.info("Кликните на графике по точке T2")
+    with col4:
+        if st.button("T3", disabled='T3' in st.session_state.points):
+            st.session_state.points['T3'] = None
+            st.info("Кликните на графике по точке T3")
+    with col5:
+        if st.button("T4", disabled='T4' in st.session_state.points):
+            st.session_state.points['T4'] = None
+            st.info("Кликните на графике по точке T4")
+    
+    # Отображение графика
+    st.plotly_chart(fig, use_container_width=True, key="chart")
+    
+    # Ввод точек через индексы (альтернативный способ)
+    with st.expander("🔢 Отметить точки по индексу (альтернативный способ)"):
+        point_order = ['T0', 'T1', 'T2', 'T3', 'T4']
+        next_point = None
+        for point_name in point_order:
+            if point_name not in st.session_state.points:
+                next_point = point_name
+                break
+        
+        if next_point:
+            st.write(f"Следующая точка для отметки: **{next_point}**")
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                idx_input = st.number_input(
+                    f"Индекс свечи для {next_point}",
+                    min_value=0,
+                    max_value=len(df) - 1,
+                    value=len(df) // 2,
+                    key=f'idx_{next_point}'
+                )
+            
+            with col_b:
+                if st.button(f"Отметить {next_point}", key=f'btn_{next_point}'):
+                    # Определяем цену в зависимости от типа паттерна и точки
+                    if st.session_state.pattern_type == 'bullish':
+                        if next_point in ['T0', 'T2', 'T4']:
+                            price = df.iloc[idx_input]['low']
+                        else:
+                            price = df.iloc[idx_input]['high']
+                    else:  # bearish
+                        if next_point in ['T0', 'T2', 'T4']:
+                            price = df.iloc[idx_input]['high']
+                        else:
+                            price = df.iloc[idx_input]['low']
+                    
+                    st.session_state.points[next_point] = {
+                        'idx': idx_input,
+                        'price': price,
+                        'time': df.iloc[idx_input]['time']
+                    }
+                    st.success(f"✅ Точка {next_point} отмечена!")
+                    st.rerun()
+        else:
+            st.info("Все точки отмечены!")
+    
+    # Показываем статус разметки
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        status_t0 = "✅" if 'T0' in st.session_state.points else "⏳"
+        st.metric("T0", status_t0)
+    with col2:
+        status_t1 = "✅" if 'T1' in st.session_state.points else "⏳"
+        st.metric("T1", status_t1)
+    with col3:
+        status_t2 = "✅" if 'T2' in st.session_state.points else "⏳"
+        st.metric("T2", status_t2)
+    
+    col4, col5 = st.columns(2)
+    with col4:
+        status_t3 = "✅" if 'T3' in st.session_state.points else "⏳"
+        st.metric("T3", status_t3)
+    with col5:
+        status_t4 = "✅" if 'T4' in st.session_state.points else "⏳"
+        st.metric("T4", status_t4)
+    
+    # Показываем информацию о точках
+    if st.session_state.points:
+        st.subheader("📍 Отмеченные точки")
+        points_df = pd.DataFrame([
+            {
+                'Точка': point_name,
+                'Индекс': point_data['idx'],
+                'Цена': f"{point_data['price']:.2f}",
+                'Время': str(point_data['time'])
+            }
+            for point_name, point_data in sorted(st.session_state.points.items())
+        ])
+        st.dataframe(points_df, use_container_width=True, hide_index=True)
+    
+    # Статистика аннотаций
+    with st.expander("📊 Статистика размеченных данных"):
+        try:
+            stats = annotator.get_statistics()
+            if stats['total'] > 0:
+                st.write(f"**Всего размечено:** {stats['total']}")
+                st.write("**По меткам:**")
+                for label, count in stats['by_label'].items():
+                    label_name = {0: 'Нет паттерна', 1: 'Бычий', 2: 'Медвежий'}.get(label, f'Unknown({label})')
+                    st.write(f"  - {label_name}: {count}")
+                st.write("**По таймфреймам:**")
+                for tf, count in stats['by_timeframe'].items():
+                    st.write(f"  - {tf}: {count}")
+            else:
+                st.info("Пока нет размеченных данных")
+        except Exception as e:
+            st.info(f"Статистика пока недоступна: {e}")
