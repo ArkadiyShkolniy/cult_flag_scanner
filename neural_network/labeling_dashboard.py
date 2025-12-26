@@ -77,6 +77,8 @@ with st.sidebar:
                 if not df.empty:
                     st.session_state.df_data = df
                     st.session_state.points = {}  # Сбрасываем точки
+                    st.session_state.current_ticker = ticker  # Сохраняем для сохранения
+                    st.session_state.current_timeframe = selected_timeframe  # Сохраняем для сохранения
                     st.success(f"✅ Загружено {len(df)} свечей")
                 else:
                     st.error("❌ Данные не загружены")
@@ -135,8 +137,12 @@ if st.session_state.df_data is None:
 else:
     df = st.session_state.df_data
     
+    # Получаем сохраненные значения для использования в функциях
+    current_ticker = st.session_state.get('current_ticker', ticker)
+    current_timeframe = st.session_state.get('current_timeframe', selected_timeframe)
+    
     # Создаем график
-    fig = create_interactive_chart(df, st.session_state.points, st.session_state.pattern_type)
+    fig = create_interactive_chart(df, st.session_state.points, st.session_state.pattern_type, current_ticker, current_timeframe)
     
     # Обработка кликов
     selected_points = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="chart")
