@@ -24,3 +24,16 @@ services:
       - PYTHONUNBUFFERED=1
     command: ["python", "service.py"]
     restart: unless-stopped
+
+  # Дашборд для разметки паттернов
+  labeling-dashboard:
+    build: .
+    container_name: labeling-dashboard
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    ports:
+      - "8505:8501"
+    command: ["streamlit", "run", "neural_network/labeling_dashboard.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.enableCORS=false", "--server.enableXsrfProtection=false"]
+    restart: unless-stopped
