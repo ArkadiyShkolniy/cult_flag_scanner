@@ -226,17 +226,19 @@ def create_matplotlib_chart(df, pattern_info, ticker, timeframe):
         point_colors = {'T0': 'lime', 'T1': 'red', 'T2': 'cyan', 'T3': 'orange', 'T4': 'magenta'}
         point_markers = {'T0': 'o', 'T1': 'D', 'T2': 'o', 'T3': 'D', 'T4': 'o'}
         
+        # Определяем смещение индексов (если берем последние N свечей)
+        offset = len(df) - len(df_plot) if len(df) > len(df_plot) else 0
+        
         for point_name in ['T0', 'T1', 'T2', 'T3', 'T4']:
             if point_name.lower() in pattern_info:
                 point_data = pattern_info[point_name.lower()]
-                # Находим индекс точки в df_plot
-                point_idx_in_plot = None
-                for i, (idx, row) in enumerate(df_plot.iterrows()):
-                    if i == point_data['idx'] or (hasattr(df, 'index') and idx == point_data.get('time')):
-                        point_idx_in_plot = i
-                        break
+                point_abs_idx = point_data['idx']  # Абсолютный индекс в исходном df
                 
-                if point_idx_in_plot is not None:
+                # Вычисляем индекс в df_plot
+                point_idx_in_plot = point_abs_idx - offset
+                
+                # Проверяем что точка попадает в диапазон df_plot
+                if 0 <= point_idx_in_plot < len(df_plot):
                     ax1.scatter(point_idx_in_plot, point_data['price'], 
                               s=200, c=point_colors[point_name], 
                               marker=point_markers[point_name], 
@@ -248,14 +250,37 @@ def create_matplotlib_chart(df, pattern_info, ticker, timeframe):
         
         # Линии
         if 't0' in pattern_info and 't1' in pattern_info:
-            t0_idx = next((i for i, (idx, _) in enumerate(df_plot.iterrows()) 
-                          if i == pattern_info['t0']['idx']), None)
-            t1_idx = next((i for i, (idx, _) in enumerate(df_plot.iterrows()) 
-                          if i == pattern_info['t1']['idx']), None)
-            if t0_idx is not None and t1_idx is not None:
+            t0_abs_idx = pattern_info['t0']['idx']
+            t1_abs_idx = pattern_info['t1']['idx']
+            t0_idx = t0_abs_idx - offset
+            t1_idx = t1_abs_idx - offset
+            
+            if 0 <= t0_idx < len(df_plot) and 0 <= t1_idx < len(df_plot):
                 ax1.plot([t0_idx, t1_idx], 
                         [pattern_info['t0']['price'], pattern_info['t1']['price']],
                         color='lime', linewidth=3, linestyle='-', label='Флагшток')
+        
+        if 't1' in pattern_info and 't3' in pattern_info:
+            t1_abs_idx = pattern_info['t1']['idx']
+            t3_abs_idx = pattern_info['t3']['idx']
+            t1_idx = t1_abs_idx - offset
+            t3_idx = t3_abs_idx - offset
+            
+            if 0 <= t1_idx < len(df_plot) and 0 <= t3_idx < len(df_plot):
+                ax1.plot([t1_idx, t3_idx], 
+                        [pattern_info['t1']['price'], pattern_info['t3']['price']],
+                        color='red', linewidth=2, linestyle='--', label='T1-T3')
+        
+        if 't2' in pattern_info and 't4' in pattern_info:
+            t2_abs_idx = pattern_info['t2']['idx']
+            t4_abs_idx = pattern_info['t4']['idx']
+            t2_idx = t2_abs_idx - offset
+            t4_idx = t4_abs_idx - offset
+            
+            if 0 <= t2_idx < len(df_plot) and 0 <= t4_idx < len(df_plot):
+                ax1.plot([t2_idx, t4_idx], 
+                        [pattern_info['t2']['price'], pattern_info['t4']['price']],
+                        color='cyan', linewidth=2, linestyle='--', label='T2-T4')
         
         # Объем
         colors_vol = ['red' if df_plot.iloc[i]['close'] < df_plot.iloc[i]['open'] else 'green' 
