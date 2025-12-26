@@ -5,3 +5,7 @@ python-dotenv
 streamlit
 plotly
 matplotlib
+torch
+torchvision
+pillow
+tqdm
