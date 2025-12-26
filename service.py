@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
 from dotenv import load_dotenv
+from t_tech.invest import Client, InstrumentIdType
 
 import sys
 from pathlib import Path
