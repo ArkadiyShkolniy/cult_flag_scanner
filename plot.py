@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from scanners.bullish_flag_scanner import BullishFlagScanner
 from scanners.bearish_flag_scanner import BearishFlagScanner
 from config import TIMEFRAMES
-from tinkoff.invest import CandleInterval
+from t_tech.invest import CandleInterval
 
 load_dotenv()
 
