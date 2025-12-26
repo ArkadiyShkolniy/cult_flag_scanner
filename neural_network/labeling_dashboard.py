@@ -182,7 +182,7 @@ else:
     # Статистика аннотаций
     with st.expander("📊 Статистика размеченных данных"):
         try:
-            stats = get_annotation_statistics()
+            stats = annotator.get_statistics()
             if stats['total'] > 0:
                 st.write(f"**Всего размечено:** {stats['total']}")
                 st.write("**По меткам:**")
@@ -447,23 +447,6 @@ def process_point_selection(selected_points, df):
     
     st.success(f"✅ Отмечена точка {next_point} (индекс {candle_idx}, цена {price:.2f})")
     st.rerun()
-
-
-def get_annotation_statistics():
-    """Получает статистику по размеченным данным"""
-    annotations_file = annotator.annotations_file
-    if not os.path.exists(annotations_file):
-        return {'total': 0, 'by_label': {}, 'by_timeframe': {}}
-    
-    annotations_df = pd.read_csv(annotations_file)
-    
-    stats = {
-        'total': len(annotations_df),
-        'by_label': annotations_df['label'].value_counts().to_dict() if 'label' in annotations_df.columns else {},
-        'by_timeframe': annotations_df['timeframe'].value_counts().to_dict() if 'timeframe' in annotations_df.columns else {}
-    }
-    
-    return stats
 
 
 def save_annotation():
