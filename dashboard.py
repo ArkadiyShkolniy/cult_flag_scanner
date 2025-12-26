@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from scanners.combined_scanner import ComplexFlagScanner
+from config import TIMEFRAMES
 
 load_dotenv()
 st.set_page_config(page_title="Complex Flag Scanner Dashboard", layout="wide")
@@ -30,6 +31,15 @@ scanner = ComplexFlagScanner(token)
 with st.sidebar:
     st.header("Управление")
     
+    # Выбор таймфрейма
+    selected_timeframe = st.selectbox(
+        "Таймфрейм",
+        options=list(TIMEFRAMES.keys()),
+        format_func=lambda x: TIMEFRAMES[x]['title'],
+        index=1 # По умолчанию 1h
+    )
+    tf_config = TIMEFRAMES[selected_timeframe]
+    
     if st.button("🚀 ЗАПУСТИТЬ СКАНИРОВАНИЕ ВСЕХ АКЦИЙ"):
         st.session_state['scan_in_progress'] = True
         st.session_state['scan_results'] = []
@@ -40,16 +50,20 @@ with st.sidebar:
         ticker_input = st.text_input("Тикер", value="RMH6")
         class_code_input = st.text_input("Class Code", value="SPBFUT")
     
-    days_back = st.slider("Дней истории", 1, 10, 5)
+    # days_back теперь берется из конфига таймфрейма, но можно оставить возможность переопределить для одиночного анализа
+    if mode == "Одиночный анализ":
+        days_back = st.slider("Дней истории", 1, tf_config['days_back'] * 2, tf_config['days_back'])
+    else:
+        days_back = tf_config['days_back'] # Для сканирования используем из конфига
 
 # --- Логика сканирования всех акций ---
 if mode == "Сканирование рынка":
-    st.info("💡 Нажмите кнопку 'ЗАПУСТИТЬ СКАНИРОВАНИЕ' в боковой панели для поиска паттернов на всех акциях")
+    st.info(f"💡 Выбран таймфрейм: {tf_config['title']}. Нажмите кнопку 'ЗАПУСТИТЬ СКАНИРОВАНИЕ' для поиска.")
     
     # Запуск сканирования
     if st.session_state.get('scan_in_progress', False):
         shares = scanner.get_all_shares()
-        st.write(f"📊 Найдено {len(shares)} акций. Начинаю анализ...")
+        st.write(f"📊 Найдено {len(shares)} акций. Начинаю анализ на ТФ {selected_timeframe}...")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -62,13 +76,31 @@ if mode == "Сканирование рынка":
             time.sleep(0.15)  # Задержка для лимитов API
             
             try:
-                df = scanner.get_candles_by_uid(share.uid, days_back=days_back)
+                # Используем настройки выбранного таймфрейма
+                df = scanner.get_candles_by_uid(
+                    share.uid, 
+                    days_back=days_back,
+                    interval=tf_config['interval']
+                )
+                
                 if not df.empty:
-                    patterns = scanner.analyze_flag_0_1_2_3_4(df)
+                    # Проверяем оба паттерна (бычий и медвежий)
+                    bullish_patterns = scanner.analyze_flag_0_1_2_3_4(df, timeframe=selected_timeframe)
+                    bearish_patterns = scanner.analyze_bearish_flag_0_1_2_3_4(df, timeframe=selected_timeframe)
+                    
+                    # Приоритет бычьему паттерну, если есть оба
+                    if bullish_patterns:
+                        patterns = bullish_patterns
+                    elif bearish_patterns:
+                        patterns = bearish_patterns
+                    else:
+                        patterns = []
+                    
                     if patterns:
                         pattern_info = patterns[0]
                         results.append({
                             "Тикер": share.ticker,
+                            "Таймфрейм": selected_timeframe,
                             "T0": pattern_info['t0']['price'],
                             "T1": pattern_info['t1']['price'],
                             "T2": pattern_info['t2']['price'],
@@ -104,6 +136,7 @@ if mode == "Сканирование рынка":
         for r in st.session_state['scan_results']:
             display_results.append({
                 "Тикер": r["Тикер"],
+                "ТФ": r.get("Таймфрейм", selected_timeframe),
                 "T0": f"{r['T0']:.2f}",
                 "T1": f"{r['T1']:.2f}",
                 "T3": f"{r['T3']:.2f}",
@@ -139,15 +172,36 @@ if mode == "Сканирование рынка":
 else:
     # Режим одиночного анализа
     show_detail_chart = True
-    df_chart = scanner.get_candles_df(ticker_input, class_code_input, days_back=days_back)
-    patterns = scanner.analyze_flag_0_1_2_3_4(df_chart) if not df_chart.empty else []
-    pattern_info = patterns[0] if patterns else None
+    
+    # Используем настройки выбранного таймфрейма
+    df_chart = scanner.get_candles_df(
+        ticker_input, 
+        class_code_input, 
+        days_back=days_back,
+        interval=tf_config['interval']
+    )
+    
+    # Проверяем оба паттерна (бычий и медвежий)
+    bullish_patterns = scanner.analyze_flag_0_1_2_3_4(df_chart, timeframe=selected_timeframe) if not df_chart.empty else []
+    bearish_patterns = scanner.analyze_bearish_flag_0_1_2_3_4(df_chart, timeframe=selected_timeframe) if not df_chart.empty else []
+    
+    # Приоритет бычьему паттерну, если есть оба
+    if bullish_patterns:
+        patterns = bullish_patterns
+        pattern_info = patterns[0]
+    elif bearish_patterns:
+        patterns = bearish_patterns
+        pattern_info = patterns[0]
+    else:
+        patterns = []
+        pattern_info = None
+    
     selected_ticker = ticker_input
 
 # --- Отображение детального графика ---
 if show_detail_chart and (mode == "Одиночный анализ" or ('scan_results' in st.session_state and selected_ticker)):
     st.write("---")
-    st.subheader(f"📈 График: {selected_ticker}")
+    st.subheader(f"📈 График: {selected_ticker} ({selected_timeframe})")
     
     if df_chart.empty:
         st.warning("Нет данных для отображения.")
@@ -168,30 +222,51 @@ if show_detail_chart and (mode == "Одиночный анализ" or ('scan_re
         col4, col5 = st.columns(2)
         with col4:
             st.metric("T3 (Второй пик)", f"{pattern_info['t3']['price']:.2f}")
-            st.caption(f"✅ T3 <= T1: {pattern_info['t3']['price']:.2f} <= {pattern_info['t1']['price']:.2f}")
+            # Проверка зависит от типа паттерна
+            if "BEARISH" in pattern_info['pattern']:
+                 st.caption(f"✅ T3 >= T1: {pattern_info['t3']['price']:.2f} >= {pattern_info['t1']['price']:.2f}")
+            else:
+                 st.caption(f"✅ T3 <= T1: {pattern_info['t3']['price']:.2f} <= {pattern_info['t1']['price']:.2f}")
+                 
         with col5:
             st.metric("T4 (Второй откат)", f"{pattern_info['t4']['price']:.2f}")
-            min_t4_allowed = pattern_info['t0']['price'] + 0.5 * pattern_info['pole_height']
-            st.caption(f"✅ T4 >= T0+50%: {pattern_info['t4']['price']:.2f} >= {min_t4_allowed:.2f}")
+            # Проверка зависит от типа паттерна
+            if "BEARISH" in pattern_info['pattern']:
+                max_t4_allowed = pattern_info['t0']['price'] - 0.5 * pattern_info['pole_height'] # Грубая оценка для текста
+                st.caption(f"✅ T4 коррекция OK") 
+            else:
+                min_t4_allowed = pattern_info['t0']['price'] + 0.5 * pattern_info['pole_height']
+                st.caption(f"✅ T4 >= T0+50%: {pattern_info['t4']['price']:.2f} >= {min_t4_allowed:.2f}")
         
         col6, col7 = st.columns(2)
         with col6:
             st.metric("Текущая цена", f"{pattern_info['current_price']:.2f}")
         with col7:
-            st.caption(f"Линия сопротивления: {pattern_info['resistance_line']:.2f}")
+            st.caption(f"Линия пробоя: {pattern_info['resistance_line']:.2f}")
 
-        # Создаем график
+        # Создаем график (используем индексы вместо времени для непрерывного графика)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                             vertical_spacing=0.03, row_heights=[0.7, 0.3])
         
+        # Используем индексы вместо времени для оси X
+        indices_x = list(range(len(df_chart)))
+        customdata_candles = [[i, df_chart.iloc[i]['time']] for i in range(len(df_chart))]
+        
         # Свечи
         fig.add_trace(go.Candlestick(
-            x=df_chart['time'],
+            x=indices_x,  # Используем индексы вместо времени
             open=df_chart['open'], high=df_chart['high'], low=df_chart['low'], close=df_chart['close'],
-            name='Цена'
+            name='Цена',
+            customdata=customdata_candles,
+            hovertemplate='<b>Индекс:</b> %{customdata[0]}<br>' +
+                         '<b>Время:</b> %{customdata[1]}<br>' +
+                         '<b>Open:</b> %{open:.2f}<br>' +
+                         '<b>High:</b> %{high:.2f}<br>' +
+                         '<b>Low:</b> %{low:.2f}<br>' +
+                         '<b>Close:</b> %{close:.2f}<extra></extra>'
         ), row=1, col=1)
         
-        # Точки паттерна
+        # Точки паттерна (используем индексы вместо времени)
         points_data = [
             ('T0', pattern_info['t0'], 'lime', 'circle'),
             ('T1', pattern_info['t1'], 'red', 'diamond'),
@@ -201,20 +276,27 @@ if show_detail_chart and (mode == "Одиночный анализ" or ('scan_re
         ]
         
         for label, point, color, symbol in points_data:
+            idx = point['idx']
+            point_price = point['price']
             fig.add_trace(go.Scatter(
-                x=[point['time']],
-                y=[point['price']],
+                x=[idx],  # Используем индекс вместо времени
+                y=[point_price],
                 mode='markers+text',
                 marker=dict(size=15, color=color, symbol=symbol, line=dict(width=2, color='white')),
                 text=[label],
                 textposition='top center',
                 name=label,
-                showlegend=True
+                showlegend=True,
+                customdata=[[idx, point['time']]],
+                hovertemplate=f'<b>{label}</b><br>' +
+                             f'<b>Индекс:</b> {idx}<br>' +
+                             '<b>Время:</b> %{customdata[0][1]}<br>' +
+                             f'<b>Цена:</b> {point_price:.2f}<extra></extra>'
             ), row=1, col=1)
         
-        # Линия флагштока (T0 -> T1)
+        # Линия флагштока (T0 -> T1) - используем индексы
         fig.add_trace(go.Scatter(
-            x=[pattern_info['t0']['time'], pattern_info['t1']['time']],
+            x=[pattern_info['t0']['idx'], pattern_info['t1']['idx']],
             y=[pattern_info['t0']['price'], pattern_info['t1']['price']],
             mode='lines',
             line=dict(color='lime', width=3, dash='solid'),
@@ -222,9 +304,9 @@ if show_detail_chart and (mode == "Одиночный анализ" or ('scan_re
             showlegend=True
         ), row=1, col=1)
         
-        # Линия сопротивления (T1 -> T3)
+        # Линия сопротивления (T1 -> T3) - используем индексы
         fig.add_trace(go.Scatter(
-            x=[pattern_info['t1']['time'], pattern_info['t3']['time']],
+            x=[pattern_info['t1']['idx'], pattern_info['t3']['idx']],
             y=[pattern_info['t1']['price'], pattern_info['t3']['price']],
             mode='lines',
             line=dict(color='red', width=2.5, dash='dash'),
@@ -232,10 +314,10 @@ if show_detail_chart and (mode == "Одиночный анализ" or ('scan_re
             showlegend=True
         ), row=1, col=1)
         
-        # Продолжение линии сопротивления
-        last_time = df_chart.iloc[-1]['time']
+        # Продолжение линии сопротивления - используем индексы
+        last_idx = len(df_chart) - 1
         fig.add_trace(go.Scatter(
-            x=[pattern_info['t3']['time'], last_time],
+            x=[pattern_info['t3']['idx'], last_idx],
             y=[pattern_info['t3']['price'], pattern_info['resistance_line']],
             mode='lines',
             line=dict(color='red', width=1.5, dash='dot'),
@@ -243,9 +325,9 @@ if show_detail_chart and (mode == "Одиночный анализ" or ('scan_re
             showlegend=False
         ), row=1, col=1)
         
-        # Линия поддержки (T2 -> T4)
+        # Линия поддержки (T2 -> T4) - используем индексы
         fig.add_trace(go.Scatter(
-            x=[pattern_info['t2']['time'], pattern_info['t4']['time']],
+            x=[pattern_info['t2']['idx'], pattern_info['t4']['idx']],
             y=[pattern_info['t2']['price'], pattern_info['t4']['price']],
             mode='lines',
             line=dict(color='cyan', width=2, dash='dash'),
@@ -253,20 +335,59 @@ if show_detail_chart and (mode == "Одиночный анализ" or ('scan_re
             showlegend=True
         ), row=1, col=1)
         
-        # Объем
+        # Объем - используем индексы вместо времени
         colors = ['red' if row['open'] - row['close'] >= 0 else 'green' 
                   for index, row in df_chart.iterrows()]
         fig.add_trace(go.Bar(
-            x=df_chart['time'], y=df_chart['volume'],
+            x=indices_x, y=df_chart['volume'],  # Используем индексы вместо времени
             marker_color=colors,
-            name='Объем'
+            name='Объем',
+            customdata=customdata_candles,
+            hovertemplate='<b>Индекс:</b> %{customdata[0]}<br>' +
+                         '<b>Время:</b> %{customdata[1]}<br>' +
+                         '<b>Объем:</b> %{y}<extra></extra>'
         ), row=2, col=1)
+        
+        # Настройка меток оси X: показываем время вместо индексов
+        # Используем только каждую N-ю метку для читаемости
+        tick_step = max(1, len(df_chart) // 20)  # Примерно 20 меток
+        tick_indices = list(range(0, len(df_chart), tick_step))
+        # Форматируем время с учетом возможных типов
+        tick_times = []
+        for i in tick_indices:
+            time_val = df_chart.iloc[i]['time']
+            if pd.isna(time_val):
+                tick_times.append('')
+            elif isinstance(time_val, pd.Timestamp):
+                if selected_timeframe == '1d':
+                    tick_times.append(time_val.strftime('%Y-%m-%d'))
+                else:
+                    tick_times.append(time_val.strftime('%Y-%m-%d %H:%M'))
+            else:
+                tick_times.append(str(time_val))
         
         fig.update_layout(
             height=800,
             xaxis_rangeslider_visible=False,
-            title=f"График {selected_ticker} - Паттерн Флаг 0-1-2-3-4",
-            template="plotly_dark"
+            title=f"График {selected_ticker} ({selected_timeframe}) - Паттерн Флаг 0-1-2-3-4",
+            template="plotly_dark",
+            hovermode='closest',
+            xaxis=dict(
+                title='Время',
+                showgrid=True,
+                tickmode='array',
+                tickvals=tick_indices,
+                ticktext=tick_times,
+                tickangle=-45
+            ),
+            xaxis2=dict(
+                title='Время',
+                showgrid=True,
+                tickmode='array',
+                tickvals=tick_indices,
+                ticktext=tick_times,
+                tickangle=-45
+            )
         )
         
         st.plotly_chart(fig, use_container_width=True)

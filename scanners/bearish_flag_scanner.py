@@ -33,8 +33,8 @@ class BearishFlagScanner:
             ]
             return shares
         
-    def get_candles_df(self, ticker: str, class_code: str, days_back: int = 5) -> pd.DataFrame:
-        """Загружает часовые свечи по Тикеру"""
+    def get_candles_df(self, ticker: str, class_code: str, days_back: int = 5, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR) -> pd.DataFrame:
+        """Загружает свечи по Тикеру с указанным интервалом"""
         try:
             with Client(self.token) as client:
                 item = client.instruments.get_instrument_by(
@@ -47,7 +47,49 @@ class BearishFlagScanner:
                     instrument_id=item.uid,
                     from_=now() - timedelta(days=days_back),
                     to=now(),
-                    interval=CandleInterval.CANDLE_INTERVAL_HOUR,
+                    interval=interval,
+                )
+                
+                data = []
+                for c in candles:
+                    data.append({
+                        'time': c.time,
+                        'open': float(quotation_to_decimal(c.open)),
+                        'high': float(quotation_to_decimal(c.high)),
+                        'low': float(quotation_to_decimal(c.low)),
+                        'close': float(quotation_to_decimal(c.close)),
+                        'volume': c.volume
+                    })
+                    
+            if not data:
+                return pd.DataFrame()
+                
+            df = pd.DataFrame(data)
+            df['time'] = pd.to_datetime(df['time'])
+            # Конвертируем время в московский часовой пояс
+            if df['time'].dt.tz is None:
+                df['time'] = df['time'].dt.tz_localize('UTC')
+            df['time'] = df['time'].dt.tz_convert('Europe/Moscow').dt.tz_localize(None)
+            return df
+            
+        except Exception as e:
+            return pd.DataFrame()
+    
+    def get_candles_df_by_dates(self, ticker: str, class_code: str, from_date, to_date, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR) -> pd.DataFrame:
+        """Загружает свечи по Тикеру за указанный период с указанным интервалом"""
+        try:
+            with Client(self.token) as client:
+                item = client.instruments.get_instrument_by(
+                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_TICKER,
+                    class_code=class_code,
+                    id=ticker
+                ).instrument
+                
+                candles = client.get_all_candles(
+                    instrument_id=item.uid,
+                    from_=from_date,
+                    to=to_date,
+                    interval=interval,
                 )
                 
                 data = []
@@ -75,15 +117,15 @@ class BearishFlagScanner:
         except Exception as e:
             return pd.DataFrame()
 
-    def get_candles_by_uid(self, uid: str, days_back: int = 5) -> pd.DataFrame:
-        """Оптимизированный метод загрузки по UID"""
+    def get_candles_by_uid(self, uid: str, days_back: int = 5, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR) -> pd.DataFrame:
+        """Оптимизированный метод загрузки по UID с указанным интервалом"""
         try:
             with Client(self.token) as client:
                 candles = client.get_all_candles(
                     instrument_id=uid,
                     from_=now() - timedelta(days=days_back),
                     to=now(),
-                    interval=CandleInterval.CANDLE_INTERVAL_HOUR,
+                    interval=interval,
                 )
                 data = []
                 for c in candles:
@@ -127,7 +169,7 @@ class BearishFlagScanner:
         
         return np.array(highs_idx), np.array(lows_idx)
 
-    def analyze(self, df: pd.DataFrame, debug=False):
+    def analyze(self, df: pd.DataFrame, debug=False, timeframe='1h'):
         """
         Основной метод анализа - ищет медвежий флаг
         Возвращает список найденных паттернов
@@ -135,9 +177,9 @@ class BearishFlagScanner:
         if len(df) < 50:
             return []
         
-        return self.analyze_bearish_flag_0_1_2_3_4(df, debug=debug)
+        return self.analyze_bearish_flag_0_1_2_3_4(df, debug=debug, timeframe=timeframe)
 
-    def analyze_bearish_flag_0_1_2_3_4(self, df: pd.DataFrame, debug=False):
+    def analyze_bearish_flag_0_1_2_3_4(self, df: pd.DataFrame, debug=False, timeframe='1h'):
         """
         Ищет паттерн Медвежий Флаг (перевернутый) со структурой 0-1-2-3-4
         
@@ -147,6 +189,7 @@ class BearishFlagScanner:
         
         Args:
             debug: Если True, выводит детальную отладочную информацию
+            timeframe: Строковое обозначение таймфрейма ('1h', '5m', '1d')
         """
         if len(df) < 50:
             if debug: 
@@ -289,6 +332,17 @@ class BearishFlagScanner:
                         t4_idx = h
                         t4_price = h_price
             
+            # Если T4 не найден среди экстремумов, ищем среди всех свечей
+            if t4_idx is None:
+                if debug:
+                    print(f"⚠️ T4 не найден среди экстремумов, ищем среди всех свечей...")
+                # Ищем максимум среди всех свечей после T3
+                for idx in range(t3_idx + 1, len(df) - 2):  # Исключаем последние 2 свечи
+                    h_price = df.iloc[idx]['high']
+                    if h_price > t4_price:
+                        t4_price = h_price
+                        t4_idx = idx
+            
             if t4_idx is None:
                 if debug: 
                     print(f"❌ T4 не найден (нет максимума между T3={t3_idx} и концом)")
@@ -423,6 +477,47 @@ class BearishFlagScanner:
                 if debug:
                     print(f"   ✅ Линии параллельны или сходятся (не расходятся)")
 
+            # 6. Проверка, что линии не пересекают тела свечей и их тени
+            if debug:
+                print(f"\n6. Проверка пересечения линий со свечами:")
+            
+            # Линия T1-T3 (поддержка) должна проходить НИЖЕ всех свечей между T1 и T3
+            slope_support = (t3 - t1) / (t3_idx - t1_idx)
+            line_crosses_support = False
+            for idx in range(t1_idx + 1, t3_idx):
+                line_price = t1 + slope_support * (idx - t1_idx)
+                candle_low = df.iloc[idx]['low']
+                if line_price >= candle_low:
+                    line_crosses_support = True
+                    if debug:
+                        print(f"   ❌ Линия T1-T3 пересекает свечу {idx}: линия={line_price:.2f}, low={candle_low:.2f}")
+                    break
+            
+            if line_crosses_support:
+                if debug:
+                    print(f"   ❌ Линия поддержки T1-T3 пересекает свечи")
+                return []
+            
+            # Линия T2-T4 (сопротивление) должна проходить ВЫШЕ всех свечей между T2 и T4
+            slope_resistance = (t4 - t2) / (t4_idx - t2_idx)
+            line_crosses_resistance = False
+            for idx in range(t2_idx + 1, t4_idx):
+                line_price = t2 + slope_resistance * (idx - t2_idx)
+                candle_high = df.iloc[idx]['high']
+                if line_price <= candle_high:
+                    line_crosses_resistance = True
+                    if debug:
+                        print(f"   ❌ Линия T2-T4 пересекает свечу {idx}: линия={line_price:.2f}, high={candle_high:.2f}")
+                    break
+            
+            if line_crosses_resistance:
+                if debug:
+                    print(f"   ❌ Линия сопротивления T2-T4 пересекает свечи")
+                return []
+            
+            if debug:
+                print(f"   ✅ Линии не пересекают тела и тени свечей")
+
             # --- ПРОБОЙ ---
             # Пробой поддержки (T1-T3) ВНИЗ
             if debug:
@@ -476,14 +571,15 @@ class BearishFlagScanner:
             if debug:
                 print(f"\nСвечей после паттерна: {candles_after}")
             
-            if 1 <= candles_after <= 5:
+            if 1 <= candles_after <= 20:
                 if debug:
-                    print(f"✅ Пробой недавний (1-5 свечей)")
+                    print(f"✅ Пробой недавний (1-20 свечей)")
                     print(f"\n{'='*60}")
                     print("✅ МЕДВЕЖИЙ ПАТТЕРН НАЙДЕН!")
                     print(f"{'='*60}")
                 return [{
                     'pattern': 'BEARISH_FLAG_0_1_2_3_4',
+                    'timeframe': timeframe,
                     't0': {'idx': t0_idx, 'price': t0, 'time': df.iloc[t0_idx]['time']},
                     't1': {'idx': t1_idx, 'price': t1, 'time': df.iloc[t1_idx]['time']},
                     't2': {'idx': t2_idx, 'price': t2, 'time': df.iloc[t2_idx]['time']},
@@ -495,7 +591,7 @@ class BearishFlagScanner:
                 }]
             else:
                 if debug:
-                    print(f"❌ Пробой не недавний: {candles_after} свечей после паттерна")
+                    print(f"❌ Пробой не недавний: {candles_after} свечей после паттерна (максимум 20)")
                 return []
 
         except Exception as e:

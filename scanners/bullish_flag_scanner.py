@@ -33,8 +33,8 @@ class BullishFlagScanner:
             ]
             return shares
         
-    def get_candles_df(self, ticker: str, class_code: str, days_back: int = 5) -> pd.DataFrame:
-        """Загружает часовые свечи по Тикеру"""
+    def get_candles_df(self, ticker: str, class_code: str, days_back: int = 5, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR) -> pd.DataFrame:
+        """Загружает свечи по Тикеру с указанным интервалом"""
         try:
             with Client(self.token) as client:
                 item = client.instruments.get_instrument_by(
@@ -47,7 +47,49 @@ class BullishFlagScanner:
                     instrument_id=item.uid,
                     from_=now() - timedelta(days=days_back),
                     to=now(),
-                    interval=CandleInterval.CANDLE_INTERVAL_HOUR,
+                    interval=interval,
+                )
+                
+                data = []
+                for c in candles:
+                    data.append({
+                        'time': c.time,
+                        'open': float(quotation_to_decimal(c.open)),
+                        'high': float(quotation_to_decimal(c.high)),
+                        'low': float(quotation_to_decimal(c.low)),
+                        'close': float(quotation_to_decimal(c.close)),
+                        'volume': c.volume
+                    })
+                    
+            if not data:
+                return pd.DataFrame()
+                
+            df = pd.DataFrame(data)
+            df['time'] = pd.to_datetime(df['time'])
+            # Конвертируем время в московский часовой пояс
+            if df['time'].dt.tz is None:
+                df['time'] = df['time'].dt.tz_localize('UTC')
+            df['time'] = df['time'].dt.tz_convert('Europe/Moscow').dt.tz_localize(None)
+            return df
+            
+        except Exception as e:
+            return pd.DataFrame()
+    
+    def get_candles_df_by_dates(self, ticker: str, class_code: str, from_date, to_date, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR) -> pd.DataFrame:
+        """Загружает свечи по Тикеру за указанный период с указанным интервалом"""
+        try:
+            with Client(self.token) as client:
+                item = client.instruments.get_instrument_by(
+                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_TICKER,
+                    class_code=class_code,
+                    id=ticker
+                ).instrument
+                
+                candles = client.get_all_candles(
+                    instrument_id=item.uid,
+                    from_=from_date,
+                    to=to_date,
+                    interval=interval,
                 )
                 
                 data = []
@@ -75,15 +117,15 @@ class BullishFlagScanner:
         except Exception as e:
             return pd.DataFrame()
 
-    def get_candles_by_uid(self, uid: str, days_back: int = 5) -> pd.DataFrame:
-        """Оптимизированный метод загрузки по UID"""
+    def get_candles_by_uid(self, uid: str, days_back: int = 5, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR) -> pd.DataFrame:
+        """Оптимизированный метод загрузки по UID с указанным интервалом"""
         try:
             with Client(self.token) as client:
                 candles = client.get_all_candles(
                     instrument_id=uid,
                     from_=now() - timedelta(days=days_back),
                     to=now(),
-                    interval=CandleInterval.CANDLE_INTERVAL_HOUR,
+                    interval=interval,
                 )
                 data = []
                 for c in candles:
@@ -127,7 +169,7 @@ class BullishFlagScanner:
         
         return np.array(highs_idx), np.array(lows_idx)
 
-    def analyze(self, df: pd.DataFrame, debug=False):
+    def analyze(self, df: pd.DataFrame, debug=False, timeframe='1h'):
         """
         Основной метод анализа - ищет бычий флаг
         Возвращает список найденных паттернов
@@ -135,9 +177,9 @@ class BullishFlagScanner:
         if len(df) < 50:
             return []
         
-        return self.analyze_flag_0_1_2_3_4(df, debug=debug)
+        return self.analyze_flag_0_1_2_3_4(df, debug=debug, timeframe=timeframe)
 
-    def analyze_flag_0_1_2_3_4(self, df: pd.DataFrame, debug=False):
+    def analyze_flag_0_1_2_3_4(self, df: pd.DataFrame, debug=False, timeframe='1h'):
         """
         Ищет паттерн Бычий Флаг со структурой 0-1-2-3-4
         
@@ -147,6 +189,7 @@ class BullishFlagScanner:
         
         Args:
             debug: Если True, выводит детальную отладочную информацию
+            timeframe: Строковое обозначение таймфрейма ('1h', '5m', '1d')
         """
         if len(df) < 50:
             if debug:
@@ -257,36 +300,77 @@ class BullishFlagScanner:
             if debug:
                 print(f"✅ T3 найден: индекс {t3_idx}, цена {t3_price:.2f}, время {df.iloc[t3_idx]['time']}")
             
-            # T4 - последний минимум перед пробоем
-            t4_idx = lows_idx[-1] if len(lows_idx) > 0 else None
+            # T4 - последний минимум перед пробоем (но не на том же индексе, что и T3)
+            t4_idx = None
+            for l_idx in reversed(lows_idx):
+                if l_idx != t3_idx:  # T4 не должен совпадать с T3
+                    t4_idx = l_idx
+                    break
+            
             if t4_idx is None:
                 if debug:
-                    print(f"❌ T4 не найден (нет минимумов)")
+                    print(f"❌ T4 не найден (нет минимумов или все совпадают с T3)")
                 return []
             
             if debug:
-                print(f"\n--- ПОИСК T2 и T4 ---")
-                print(f"T4 (последний минимум): индекс {t4_idx}, цена {df.iloc[t4_idx]['low']:.2f}, время {df.iloc[t4_idx]['time']}")
+                print(f"\n--- ПОИСК T2 ---")
+                print(f"T4 (последний минимум, не совпадающий с T3): индекс {t4_idx}, цена {df.iloc[t4_idx]['low']:.2f}, время {df.iloc[t4_idx]['time']}")
             
-            # Ищем T2 - минимум между T1 и max(T3, T4)
-            max_t3_t4_idx = max(t3_idx, t4_idx)
+            # Ищем T2 - минимум между T1 и T4
             t2_idx = None
             for l in lows_idx:
-                if t1_idx < l < max_t3_t4_idx:
+                if t1_idx < l < t4_idx:  # T2 между T1 и T4
                     if t2_idx is None or l > t2_idx:  # Берем последний подходящий минимум
                         t2_idx = l
             
             if t2_idx is None:
                 if debug:
-                    print(f"❌ T2 не найден (нет минимума между T1={t1_idx} и max(T3={t3_idx},T4={t4_idx})={max_t3_t4_idx})")
+                    print(f"❌ T2 не найден (нет минимума между T1={t1_idx} и T4={t4_idx})")
                 return []
             
             if debug:
                 print(f"✅ T2 найден: индекс {t2_idx}, цена {df.iloc[t2_idx]['low']:.2f}, время {df.iloc[t2_idx]['time']}")
             
-            # Проверяем логическую хронологию: T0 < T1 < T2, и T2 между T1 и концом флага
-            # T3 и T4 могут быть в любом порядке относительно друг друга
-            if not (t1_idx < t2_idx):
+            # Ищем T3 между T2 и T4 (T3 должна быть между ними, а не после T4)
+            if t3_idx is None or t3_idx < t2_idx or t3_idx >= t4_idx:
+                if debug:
+                    if t3_idx is not None:
+                        print(f"⚠️ T3 (idx {t3_idx}) не находится между T2 ({t2_idx}) и T4 ({t4_idx}), ищем заново...")
+                    else:
+                        print(f"⚠️ Ищем T3 между T2 ({t2_idx}) и T4 ({t4_idx})...")
+                
+                # Ищем T3 между T2 и T4
+                t3_idx_new = None
+                t3_price_new = 0
+                for idx in range(t2_idx + 1, t4_idx):  # T3 должна быть между T2 и T4
+                    h_price = df.iloc[idx]['high']
+                    if h_price <= t1_price * 1.05:
+                        # Проверяем, что это локальный максимум (>= соседних)
+                        is_local_max = True
+                        if idx > 0:
+                            if h_price < df.iloc[idx-1]['high']:
+                                is_local_max = False
+                        if idx < len(df) - 1:
+                            if h_price < df.iloc[idx+1]['high']:
+                                is_local_max = False
+                        
+                        if is_local_max and h_price > t3_price_new:
+                            # Берем локальный максимум с максимальным high
+                            t3_price_new = h_price
+                            t3_idx_new = idx
+                
+                if t3_idx_new is not None:
+                    t3_idx = t3_idx_new
+                    t3_price = t3_price_new
+                    if debug:
+                        print(f"✅ T3 найдена: idx {t3_idx}, цена {t3_price:.2f}, время {df.iloc[t3_idx]['time']}")
+                else:
+                    if debug:
+                        print(f"❌ Не удалось найти T3 между T2 ({t2_idx}) и T4 ({t4_idx})")
+                    return []
+            
+            # Проверяем логическую хронологию: T0 < T1 < T2 < T3 < T4
+            if not (t1_idx < t2_idx < t3_idx < t4_idx):
                 if debug:
                     print(f"❌ Нарушена хронология: T1 ({t1_idx}) >= T2 ({t2_idx})")
                 return []
@@ -404,7 +488,48 @@ class BullishFlagScanner:
                 if debug:
                     print(f"   ✅ Линии параллельны или сходятся (не расходятся)")
             
-            # 6. Проверка линии тренда T1-T3 (верхняя граница флага)
+            # 6. Проверка, что линии не пересекают тела свечей и их тени
+            if debug:
+                print(f"\n6. Проверка пересечения линий со свечами:")
+            
+            # Линия T1-T3 (сопротивление) должна проходить ВЫШЕ всех свечей между T1 и T3
+            slope_resistance = (t3 - t1) / (t3_idx - t1_idx)
+            line_crosses_resistance = False
+            for idx in range(t1_idx + 1, t3_idx):
+                line_price = t1 + slope_resistance * (idx - t1_idx)
+                candle_high = df.iloc[idx]['high']
+                if line_price <= candle_high:
+                    line_crosses_resistance = True
+                    if debug:
+                        print(f"   ❌ Линия T1-T3 пересекает свечу {idx}: линия={line_price:.2f}, high={candle_high:.2f}")
+                    break
+            
+            if line_crosses_resistance:
+                if debug:
+                    print(f"   ❌ Линия сопротивления T1-T3 пересекает свечи")
+                return []
+            
+            # Линия T2-T4 (поддержка) должна проходить НИЖЕ всех свечей между T2 и T4
+            slope_support = (t4 - t2) / (t4_idx - t2_idx)
+            line_crosses_support = False
+            for idx in range(t2_idx + 1, t4_idx):
+                line_price = t2 + slope_support * (idx - t2_idx)
+                candle_low = df.iloc[idx]['low']
+                if line_price >= candle_low:
+                    line_crosses_support = True
+                    if debug:
+                        print(f"   ❌ Линия T2-T4 пересекает свечу {idx}: линия={line_price:.2f}, low={candle_low:.2f}")
+                    break
+            
+            if line_crosses_support:
+                if debug:
+                    print(f"   ❌ Линия поддержки T2-T4 пересекает свечи")
+                return []
+            
+            if debug:
+                print(f"   ✅ Линии не пересекают тела и тени свечей")
+            
+            # 7. Проверка линии тренда T1-T3 (верхняя граница флага)
             # Уравнение прямой через точки (t1_idx, t1) и (t3_idx, t3)
             current_idx = len(df) - 1
             current_price = df.iloc[-1]['close']
@@ -457,14 +582,15 @@ class BullishFlagScanner:
             candles_after_pattern = current_idx - max_pattern_idx
             if debug:
                 print(f"\nСвечей после паттерна: {candles_after_pattern}")
-            if 1 <= candles_after_pattern <= 5:
+            if 1 <= candles_after_pattern <= 20:
                 if debug:
-                    print(f"✅ Пробой недавний (1-5 свечей)")
+                    print(f"✅ Пробой недавний (1-20 свечей)")
                     print(f"\n{'='*60}")
                     print("✅ БЫЧИЙ ПАТТЕРН НАЙДЕН!")
                     print(f"{'='*60}")
                 return [{
                     'pattern': 'FLAG_0_1_2_3_4',
+                    'timeframe': timeframe,
                     't0': {'idx': t0_idx, 'price': t0, 'time': df.iloc[t0_idx]['time']},
                     't1': {'idx': t1_idx, 'price': t1, 'time': df.iloc[t1_idx]['time']},
                     't2': {'idx': t2_idx, 'price': t2, 'time': df.iloc[t2_idx]['time']},
@@ -476,7 +602,7 @@ class BullishFlagScanner:
                 }]
             else:
                 if debug:
-                    print(f"❌ Пробой не недавний: {candles_after_pattern} свечей после паттерна")
+                    print(f"❌ Пробой не недавний: {candles_after_pattern} свечей после паттерна (максимум 20)")
                 return []
             
         except Exception as e:

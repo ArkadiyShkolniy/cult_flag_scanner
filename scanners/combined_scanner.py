@@ -3,6 +3,7 @@
 """
 from .bullish_flag_scanner import BullishFlagScanner
 from .bearish_flag_scanner import BearishFlagScanner
+from t_tech.invest import CandleInterval
 
 
 class ComplexFlagScanner:
@@ -20,29 +21,29 @@ class ComplexFlagScanner:
         """Получает список всех доступных акций (использует бычий сканер)"""
         return self.bullish_scanner.get_all_shares()
     
-    def get_candles_df(self, ticker: str, class_code: str, days_back: int = 5):
+    def get_candles_df(self, ticker: str, class_code: str, days_back: int = 5, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR):
         """Загружает свечи (использует бычий сканер)"""
-        return self.bullish_scanner.get_candles_df(ticker, class_code, days_back)
+        return self.bullish_scanner.get_candles_df(ticker, class_code, days_back, interval)
     
-    def get_candles_by_uid(self, uid: str, days_back: int = 5):
+    def get_candles_by_uid(self, uid: str, days_back: int = 5, interval: CandleInterval = CandleInterval.CANDLE_INTERVAL_HOUR):
         """Загружает свечи по UID (использует бычий сканер)"""
-        return self.bullish_scanner.get_candles_by_uid(uid, days_back)
+        return self.bullish_scanner.get_candles_by_uid(uid, days_back, interval)
     
-    def analyze_flag_0_1_2_3_4(self, df, debug=False):
+    def analyze_flag_0_1_2_3_4(self, df, debug=False, timeframe='1h'):
         """Анализирует бычий флаг"""
-        return self.bullish_scanner.analyze_flag_0_1_2_3_4(df, debug=debug)
+        return self.bullish_scanner.analyze_flag_0_1_2_3_4(df, debug=debug, timeframe=timeframe)
     
-    def analyze_bearish_flag_0_1_2_3_4(self, df, debug=False):
+    def analyze_bearish_flag_0_1_2_3_4(self, df, debug=False, timeframe='1h'):
         """Анализирует медвежий флаг"""
-        return self.bearish_scanner.analyze_bearish_flag_0_1_2_3_4(df, debug=debug)
+        return self.bearish_scanner.analyze_bearish_flag_0_1_2_3_4(df, debug=debug, timeframe=timeframe)
     
-    def analyze(self, df, debug=False):
+    def analyze(self, df, debug=False, timeframe='1h'):
         """Анализирует оба типа паттернов"""
         patterns = []
-        bullish = self.bullish_scanner.analyze(df, debug=debug)
+        bullish = self.bullish_scanner.analyze(df, debug=debug, timeframe=timeframe)
         if bullish:
             patterns.extend(bullish)
-        bearish = self.bearish_scanner.analyze(df, debug=debug)
+        bearish = self.bearish_scanner.analyze(df, debug=debug, timeframe=timeframe)
         if bearish:
             patterns.extend(bearish)
         return patterns
