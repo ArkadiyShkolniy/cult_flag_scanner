@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from dotenv import load_dotenv
+from t_tech.invest import Client, InstrumentIdType
 
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ from config import TIMEFRAMES
 load_dotenv()
 st.set_page_config(page_title="Complex Flag Scanner Dashboard", layout="wide")
 
-st.title("🏳️ Сканер Сложного Флага (0-1-2-3-4) - Все Акции")
+st.title("🏳️ Сканер Сложного Флага (0-1-2-3-4) - Акции и Фьючерсы")
 
 # Инициализация
 token = os.environ.get("TINKOFF_INVEST_TOKEN")
@@ -26,6 +27,45 @@ if not token:
     st.stop()
 
 scanner = ComplexFlagScanner(token)
+
+# Список фьючерсов (аналогично service.py)
+FUTURES_TO_SCAN = [
+    {'ticker': 'MXH6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи H6'},
+    {'ticker': 'RIH6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС H6'},
+    {'ticker': 'GDH6', 'class_code': 'SPBFUT', 'name': 'Золото H6'},
+    {'ticker': 'SiH6', 'class_code': 'SPBFUT', 'name': 'Серебро H6'},
+    {'ticker': 'SVH6', 'class_code': 'SPBFUT', 'name': 'Серебро/Валюта H6'},
+]
+
+def get_future_instrument(ticker, class_code):
+    """Получает инструмент фьючерса по тикеру и class_code"""
+    try:
+        with Client(token) as client:
+            instrument = client.instruments.get_instrument_by(
+                id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_TICKER,
+                class_code=class_code,
+                id=ticker
+            ).instrument
+            
+            return {
+                'ticker': instrument.ticker,
+                'uid': instrument.uid,
+                'name': instrument.name,
+                'class_code': class_code,
+                'type': 'Фьючерс'
+            }
+    except Exception as e:
+        return None
+
+def get_all_futures():
+    """Получает список всех доступных фьючерсов"""
+    futures = []
+    for future_config in FUTURES_TO_SCAN:
+        future = get_future_instrument(future_config['ticker'], future_config['class_code'])
+        if future:
+            future['display_name'] = future_config['name']
+            futures.append(future)
+    return futures
 
 # --- Боковая панель ---
 with st.sidebar:
@@ -40,11 +80,18 @@ with st.sidebar:
     )
     tf_config = TIMEFRAMES[selected_timeframe]
     
-    if st.button("🚀 ЗАПУСТИТЬ СКАНИРОВАНИЕ ВСЕХ АКЦИЙ"):
-        st.session_state['scan_in_progress'] = True
-        st.session_state['scan_results'] = []
-    
     mode = st.radio("Режим", ["Сканирование рынка", "Одиночный анализ"])
+    
+    if mode == "Сканирование рынка":
+        instrument_type = st.selectbox(
+            "Тип инструментов",
+            ["Все", "Только акции", "Только фьючерсы"],
+            index=0
+        )
+        if st.button("🚀 ЗАПУСТИТЬ СКАНИРОВАНИЕ"):
+            st.session_state['scan_in_progress'] = True
+            st.session_state['scan_results'] = []
+            st.session_state['instrument_type'] = instrument_type
     
     if mode == "Одиночный анализ":
         ticker_input = st.text_input("Тикер", value="RMH6")
@@ -56,51 +103,76 @@ with st.sidebar:
     else:
         days_back = tf_config['days_back'] # Для сканирования используем из конфига
 
-# --- Логика сканирования всех акций ---
+# --- Логика сканирования всех инструментов ---
 if mode == "Сканирование рынка":
-    st.info(f"💡 Выбран таймфрейм: {tf_config['title']}. Нажмите кнопку 'ЗАПУСТИТЬ СКАНИРОВАНИЕ' для поиска.")
+    instrument_type = st.session_state.get('instrument_type', 'Все')
+    st.info(f"💡 Выбран таймфрейм: {tf_config['title']}. Тип инструментов: {instrument_type}. Нажмите кнопку 'ЗАПУСТИТЬ СКАНИРОВАНИЕ' для поиска.")
     
     # Запуск сканирования
     if st.session_state.get('scan_in_progress', False):
-        shares = scanner.get_all_shares()
-        st.write(f"📊 Найдено {len(shares)} акций. Начинаю анализ на ТФ {selected_timeframe}...")
+        # Собираем список инструментов для сканирования
+        all_instruments = []
+        
+        if instrument_type in ["Все", "Только акции"]:
+            shares = scanner.get_all_shares()
+            for share in shares:
+                all_instruments.append({
+                    'ticker': share.ticker,
+                    'uid': share.uid,
+                    'name': share.name,
+                    'class_code': share.class_code,
+                    'type': 'Акция'
+                })
+        
+        if instrument_type in ["Все", "Только фьючерсы"]:
+            futures = get_all_futures()
+            for future in futures:
+                all_instruments.append({
+                    'ticker': future['ticker'],
+                    'uid': future['uid'],
+                    'name': future['name'],
+                    'class_code': future['class_code'],
+                    'type': 'Фьючерс'
+                })
+        
+        instrument_type_text = {
+            "Все": f"{len([i for i in all_instruments if i['type'] == 'Акция'])} акций + {len([i for i in all_instruments if i['type'] == 'Фьючерс'])} фьючерсов",
+            "Только акции": f"{len(all_instruments)} акций",
+            "Только фьючерсы": f"{len(all_instruments)} фьючерсов"
+        }
+        
+        st.write(f"📊 Найдено: {instrument_type_text[instrument_type]}. Начинаю анализ на ТФ {selected_timeframe}...")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         results = []
         
-        for i, share in enumerate(shares):
-            status_text.text(f"Анализ {i+1}/{len(shares)}: {share.ticker}")
-            progress_bar.progress((i + 1) / len(shares))
+        for i, instrument in enumerate(all_instruments):
+            status_text.text(f"Анализ {i+1}/{len(all_instruments)}: {instrument['ticker']} ({instrument['type']})")
+            progress_bar.progress((i + 1) / len(all_instruments))
             
             time.sleep(0.15)  # Задержка для лимитов API
             
             try:
                 # Используем настройки выбранного таймфрейма
                 df = scanner.get_candles_by_uid(
-                    share.uid, 
+                    instrument['uid'], 
                     days_back=days_back,
                     interval=tf_config['interval']
                 )
                 
                 if not df.empty:
-                    # Проверяем оба паттерна (бычий и медвежий)
-                    bullish_patterns = scanner.analyze_flag_0_1_2_3_4(df, timeframe=selected_timeframe)
-                    bearish_patterns = scanner.analyze_bearish_flag_0_1_2_3_4(df, timeframe=selected_timeframe)
-                    
-                    # Приоритет бычьему паттерну, если есть оба
-                    if bullish_patterns:
-                        patterns = bullish_patterns
-                    elif bearish_patterns:
-                        patterns = bearish_patterns
-                    else:
-                        patterns = []
+                    # Используем метод analyze, который проверяет оба типа паттернов
+                    patterns = scanner.analyze(df, timeframe=selected_timeframe)
                     
                     if patterns:
                         pattern_info = patterns[0]
+                        pattern_type = "Бычий" if "BEARISH" not in pattern_info['pattern'] else "Медвежий"
                         results.append({
-                            "Тикер": share.ticker,
+                            "Тикер": instrument['ticker'],
+                            "Тип": instrument['type'],
                             "Таймфрейм": selected_timeframe,
+                            "Паттерн": pattern_type,
                             "T0": pattern_info['t0']['price'],
                             "T1": pattern_info['t1']['price'],
                             "T2": pattern_info['t2']['price'],
@@ -136,6 +208,8 @@ if mode == "Сканирование рынка":
         for r in st.session_state['scan_results']:
             display_results.append({
                 "Тикер": r["Тикер"],
+                "Тип": r.get("Тип", "Акция"),
+                "Паттерн": r.get("Паттерн", "-"),
                 "ТФ": r.get("Таймфрейм", selected_timeframe),
                 "T0": f"{r['T0']:.2f}",
                 "T1": f"{r['T1']:.2f}",
@@ -181,20 +255,9 @@ else:
         interval=tf_config['interval']
     )
     
-    # Проверяем оба паттерна (бычий и медвежий)
-    bullish_patterns = scanner.analyze_flag_0_1_2_3_4(df_chart, timeframe=selected_timeframe) if not df_chart.empty else []
-    bearish_patterns = scanner.analyze_bearish_flag_0_1_2_3_4(df_chart, timeframe=selected_timeframe) if not df_chart.empty else []
-    
-    # Приоритет бычьему паттерну, если есть оба
-    if bullish_patterns:
-        patterns = bullish_patterns
-        pattern_info = patterns[0]
-    elif bearish_patterns:
-        patterns = bearish_patterns
-        pattern_info = patterns[0]
-    else:
-        patterns = []
-        pattern_info = None
+    # Используем метод analyze, который проверяет оба типа паттернов
+    patterns = scanner.analyze(df_chart, timeframe=selected_timeframe) if not df_chart.empty else []
+    pattern_info = patterns[0] if patterns else None
     
     selected_ticker = ticker_input
 
