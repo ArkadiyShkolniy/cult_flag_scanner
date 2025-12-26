@@ -9,3 +9,4 @@ torch
 torchvision
 pillow
 tqdm
+requests

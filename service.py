@@ -2,6 +2,7 @@ import time
 import os
 import sys
 import io
+import requests
 import matplotlib
 matplotlib.use('Agg')  # Неинтерактивный бэкенд для Docker
 import matplotlib.pyplot as plt
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from scanners.combined_scanner import ComplexFlagScanner
 from config import TIMEFRAMES
+from telegram_utils import send_telegram_signal, create_flag_chart_image
 
 load_dotenv()
 
@@ -27,6 +29,15 @@ def run_complex_flag_scanner():
         return
 
     print(f"🚀 [Complex Flag Scanner] Запуск. Сканирование всех акций TQBR на таймфреймах: {', '.join(TIMEFRAMES.keys())}...")
+    
+    # Проверяем настройки Telegram
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    telegram_chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if telegram_token and telegram_chat:
+        send_telegram_signal("🚀 <b>Complex Flag Scanner запущен</b>\nМониторинг паттернов 'Флаг' на всех таймфреймах.")
+        print("   ✅ Telegram уведомления включены")
+    else:
+        print("   ⚠️ Telegram уведомления отключены (не настроены токены)")
     
     scanner = ComplexFlagScanner(token)
     # Кэш отправленных сигналов: ключ (ticker, timeframe) -> значение candle_time
@@ -83,6 +94,36 @@ def run_complex_flag_scanner():
                                     
                                     print(f"   🚩 {share.ticker} [{tf_name}]: {pattern_type} флаг найден!")
                                     print(f"      T0: {t0:.2f}, T1: {t1:.2f}, T2: {t2:.2f}, T3: {t3:.2f}, T4: {t4:.2f}")
+                                    
+                                    # Формируем сообщение для Telegram
+                                    direction_emoji = "🟢" if pattern_type == "Бычий" else "🔴"
+                                    direction_text = "LONG" if pattern_type == "Бычий" else "SHORT"
+                                    current_price = df.iloc[-1]['close']
+                                    current_time = df.iloc[-1]['time']
+                                    
+                                    tg_message = (
+                                        f"{direction_emoji} <b>ПАТТЕРН ФЛАГ: {share.ticker}</b>\n"
+                                        f"<b>Направление:</b> {pattern_type} ({direction_text})\n"
+                                        f"<b>Таймфрейм:</b> {tf_config['title']}\n"
+                                        f"<b>Цена:</b> {current_price:.2f}\n"
+                                        f"<b>Время:</b> {current_time}\n\n"
+                                        f"<b>Точки паттерна:</b>\n"
+                                        f"T0: {t0:.2f}\n"
+                                        f"T1: {t1:.2f}\n"
+                                        f"T2: {t2:.2f}\n"
+                                        f"T3: {t3:.2f}\n"
+                                        f"T4: {t4:.2f}\n\n"
+                                        f"#{share.ticker} #{tf_name} #{direction_text}"
+                                    )
+                                    
+                                    # Создаем график
+                                    chart_image = create_flag_chart_image(df, pattern_info, share.ticker, tf_name)
+                                    
+                                    # Отправляем в Telegram
+                                    if send_telegram_signal(tg_message, chart_image):
+                                        print(f"      ✅ Отправлено в Telegram")
+                                    else:
+                                        print(f"      ⚠️ Не удалось отправить в Telegram")
                                 
                     except Exception as e:
                         pass
