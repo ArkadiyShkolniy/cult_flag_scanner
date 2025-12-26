@@ -579,15 +579,98 @@ class BullishFlagScanner:
                     print(f"\n❌ Пробой не найден")
                 return []
             
+            # --- ФИЛЬТРЫ КАЧЕСТВА ПРОБОЯ ---
+            if debug:
+                print(f"\n{'='*60}")
+                print("ПРОВЕРКА КАЧЕСТВА ПРОБОЯ")
+                print(f"{'='*60}")
+            
+            # 8.1. Проверка силы пробоя
+            resistance_at_breakout = t1 + slope * (breakout_idx - t1_idx)
+            breakout_strength = ((df.iloc[breakout_idx]['high'] - resistance_at_breakout) / resistance_at_breakout) * 100
+            min_breakout_strength = 0.3  # Минимум 0.3% выше линии
+            
+            if debug:
+                print(f"\n8.1. Сила пробоя: {breakout_strength:.2f}% (минимум {min_breakout_strength}%)")
+            if breakout_strength < min_breakout_strength:
+                if debug:
+                    print(f"   ❌ Слабый пробой: {breakout_strength:.2f}% < {min_breakout_strength}%")
+                return []
+            if debug:
+                print(f"   ✅ Пробой достаточно сильный")
+            
+            # 8.2. Проверка объема на пробое
+            avg_volume = df['volume'].mean()
+            breakout_volume = df.iloc[breakout_idx]['volume']
+            min_volume_multiplier = 1.15  # Объем должен быть минимум на 15% выше среднего
+            
+            if debug:
+                print(f"\n8.2. Объем на пробое: {breakout_volume:.0f} (средний: {avg_volume:.0f}, требуется: {avg_volume * min_volume_multiplier:.0f})")
+            if breakout_volume < avg_volume * min_volume_multiplier:
+                if debug:
+                    print(f"   ❌ Слабый объем на пробое: {breakout_volume:.0f} < {avg_volume * min_volume_multiplier:.0f}")
+                return []
+            if debug:
+                print(f"   ✅ Объем на пробое достаточен")
+            
+            # 8.3. Проверка объема на флагштоке (импульсе)
+            pole_volumes = df.iloc[t0_idx:t1_idx+1]['volume']
+            avg_pole_volume = pole_volumes.mean()
+            min_pole_volume_multiplier = 1.1  # Объем на импульсе должен быть выше среднего
+            
+            if debug:
+                print(f"\n8.3. Средний объем на флагштоке: {avg_pole_volume:.0f} (средний общий: {avg_volume:.0f})")
+            if avg_pole_volume < avg_volume * min_pole_volume_multiplier:
+                if debug:
+                    print(f"   ⚠️ Объем на флагштоке слабоват, но продолжаем")
+                # Это предупреждение, не критично
+            
             candles_after_pattern = current_idx - max_pattern_idx
             if debug:
                 print(f"\nСвечей после паттерна: {candles_after_pattern}")
             if 1 <= candles_after_pattern <= 20:
                 if debug:
                     print(f"✅ Пробой недавний (1-20 свечей)")
+                
+                # Рассчитываем оценку качества паттерна
+                quality_score = 0
+                volume_ratio = breakout_volume / avg_volume if avg_volume > 0 else 1
+                pole_volume_ratio = avg_pole_volume / avg_volume if avg_volume > 0 else 1
+                
+                # Баллы за силу пробоя
+                if breakout_strength > 1.0:
+                    quality_score += 30
+                elif breakout_strength > 0.5:
+                    quality_score += 15
+                else:
+                    quality_score += 5
+                
+                # Баллы за объем на пробое
+                if volume_ratio > 2.0:
+                    quality_score += 30
+                elif volume_ratio > 1.5:
+                    quality_score += 20
+                elif volume_ratio > 1.2:
+                    quality_score += 10
+                
+                # Баллы за объем на флагштоке
+                if pole_volume_ratio > 1.5:
+                    quality_score += 20
+                elif pole_volume_ratio > 1.2:
+                    quality_score += 10
+                
+                # Баллы за соотношение высота/ширина флага
+                flag_width = t4_idx - t1_idx
+                if flag_width > 0:
+                    aspect_ratio = pole_height / flag_width
+                    if 0.01 <= aspect_ratio <= 0.1:  # Оптимальное соотношение
+                        quality_score += 20
+                
+                if debug:
                     print(f"\n{'='*60}")
-                    print("✅ БЫЧИЙ ПАТТЕРН НАЙДЕН!")
+                    print(f"✅ БЫЧИЙ ПАТТЕРН НАЙДЕН! (Качество: {quality_score}/100)")
                     print(f"{'='*60}")
+                
                 return [{
                     'pattern': 'FLAG_0_1_2_3_4',
                     'timeframe': timeframe,
@@ -598,7 +681,10 @@ class BullishFlagScanner:
                     't4': {'idx': t4_idx, 'price': t4, 'time': df.iloc[t4_idx]['time']},
                     'current_price': current_price,
                     'resistance_line': resistance_price_now,
-                    'pole_height': pole_height
+                    'pole_height': pole_height,
+                    'quality_score': quality_score,
+                    'breakout_strength': breakout_strength,
+                    'breakout_volume_ratio': volume_ratio
                 }]
             else:
                 if debug:
