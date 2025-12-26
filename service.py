@@ -24,34 +24,37 @@ SCAN_INTERVAL = 60 * 10
 
 # Список фьючерсов для сканирования
 # Формат: {ticker, class_code, name}
-# Примечание: Тикеры фьючерсов меняются каждый месяц (H/M/U/Z - месяцы экспирации)
+# Примечание: Тикеры фьючерсов меняются каждый месяц
+# Формат тикера: БАЗОВЫЙ_АКТИВ + МЕСЯЦ + ГОД
+# Месяцы: H(Mar), M(Jun), U(Sep), Z(Dec) и другие
 # Для актуальных тикеров проверьте на бирже или используйте API для получения активных контрактов
+# Если фьючерс не найден (истек или не существует), он будет пропущен
 FUTURES_TO_SCAN = [
     # Индекс Мосбиржи (MX - базовый актив)
     {'ticker': 'MXH6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи H6'},
     {'ticker': 'MXM6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи M6'},
     {'ticker': 'MXU6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи U6'},
     {'ticker': 'MXZ6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи Z6'},
-    # Индекс РТС (RTS - базовый актив)
-    {'ticker': 'RTSH6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС H6'},
-    {'ticker': 'RTSM6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС M6'},
-    {'ticker': 'RTSU6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС U6'},
-    {'ticker': 'RTSZ6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС Z6'},
-    # Золото (GOLD - базовый актив)
-    {'ticker': 'GOLDH6', 'class_code': 'SPBFUT', 'name': 'Золото H6'},
-    {'ticker': 'GOLDM6', 'class_code': 'SPBFUT', 'name': 'Золото M6'},
-    {'ticker': 'GOLDU6', 'class_code': 'SPBFUT', 'name': 'Золото U6'},
-    {'ticker': 'GOLDZ6', 'class_code': 'SPBFUT', 'name': 'Золото Z6'},
+    # Индекс РТС (RI - базовый актив, не RTS!)
+    {'ticker': 'RIH6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС H6'},
+    {'ticker': 'RIM6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС M6'},
+    {'ticker': 'RIU6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС U6'},
+    {'ticker': 'RIZ6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС Z6'},
+    # Золото (GLD - базовый актив)
+    {'ticker': 'GLDH6', 'class_code': 'SPBFUT', 'name': 'Золото H6'},
+    {'ticker': 'GLDM6', 'class_code': 'SPBFUT', 'name': 'Золото M6'},
+    {'ticker': 'GLDU6', 'class_code': 'SPBFUT', 'name': 'Золото U6'},
+    {'ticker': 'GLDZ6', 'class_code': 'SPBFUT', 'name': 'Золото Z6'},
     # Нефть Brent (BR - базовый актив)
     {'ticker': 'BRH6', 'class_code': 'SPBFUT', 'name': 'Нефть BR H6'},
     {'ticker': 'BRM6', 'class_code': 'SPBFUT', 'name': 'Нефть BR M6'},
     {'ticker': 'BRU6', 'class_code': 'SPBFUT', 'name': 'Нефть BR U6'},
     {'ticker': 'BRZ6', 'class_code': 'SPBFUT', 'name': 'Нефть BR Z6'},
-    # Серебро (SILV - базовый актив)
-    {'ticker': 'SILVH6', 'class_code': 'SPBFUT', 'name': 'Серебро H6'},
-    {'ticker': 'SILVM6', 'class_code': 'SPBFUT', 'name': 'Серебро M6'},
-    {'ticker': 'SILVU6', 'class_code': 'SPBFUT', 'name': 'Серебро U6'},
-    {'ticker': 'SILVZ6', 'class_code': 'SPBFUT', 'name': 'Серебро Z6'},
+    # Серебро (SIL - базовый актив)
+    {'ticker': 'SILH6', 'class_code': 'SPBFUT', 'name': 'Серебро H6'},
+    {'ticker': 'SILM6', 'class_code': 'SPBFUT', 'name': 'Серебро M6'},
+    {'ticker': 'SILU6', 'class_code': 'SPBFUT', 'name': 'Серебро U6'},
+    {'ticker': 'SILZ6', 'class_code': 'SPBFUT', 'name': 'Серебро Z6'},
 ]
 
 
