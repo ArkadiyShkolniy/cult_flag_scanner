@@ -181,21 +181,24 @@ else:
     
     # Статистика аннотаций
     with st.expander("📊 Статистика размеченных данных"):
-        stats = annotator.get_statistics()
-        if stats['total'] > 0:
-            st.write(f"**Всего размечено:** {stats['total']}")
-            st.write("**По меткам:**")
-            for label, count in stats['by_label'].items():
-                label_name = {0: 'Нет паттерна', 1: 'Бычий', 2: 'Медвежий'}.get(label, f'Unknown({label})')
-                st.write(f"  - {label_name}: {count}")
-            st.write("**По таймфреймам:**")
-            for tf, count in stats['by_timeframe'].items():
-                st.write(f"  - {tf}: {count}")
-        else:
-            st.info("Пока нет размеченных данных")
+        try:
+            stats = get_annotation_statistics()
+            if stats['total'] > 0:
+                st.write(f"**Всего размечено:** {stats['total']}")
+                st.write("**По меткам:**")
+                for label, count in stats['by_label'].items():
+                    label_name = {0: 'Нет паттерна', 1: 'Бычий', 2: 'Медвежий'}.get(label, f'Unknown({label})')
+                    st.write(f"  - {label_name}: {count}")
+                st.write("**По таймфреймам:**")
+                for tf, count in stats['by_timeframe'].items():
+                    st.write(f"  - {tf}: {count}")
+            else:
+                st.info("Пока нет размеченных данных")
+        except Exception as e:
+            st.info(f"Статистика пока недоступна: {e}")
 
 
-def create_interactive_chart(df, points, pattern_type):
+def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'):
     """Создает интерактивный график с возможностью отмечать точки"""
     
     # Используем индексы для непрерывного графика
@@ -354,10 +357,13 @@ def create_interactive_chart(df, points, pattern_type):
         else:
             tick_times.append(str(time_val))
     
+    # Определяем формат времени для подписи тиков
+    time_format = '%Y-%m-%d' if timeframe == '1d' else '%Y-%m-%d %H:%M'
+    
     fig.update_layout(
         height=800,
         xaxis_rangeslider_visible=False,
-        title=f"График {ticker} ({selected_timeframe}) - Разметка паттерна",
+        title=f"График {ticker} ({timeframe}) - Разметка паттерна",
         template="plotly_dark",
         hovermode='closest',
         xaxis=dict(
@@ -443,6 +449,23 @@ def process_point_selection(selected_points, df):
     st.rerun()
 
 
+def get_annotation_statistics():
+    """Получает статистику по размеченным данным"""
+    annotations_file = annotator.annotations_file
+    if not os.path.exists(annotations_file):
+        return {'total': 0, 'by_label': {}, 'by_timeframe': {}}
+    
+    annotations_df = pd.read_csv(annotations_file)
+    
+    stats = {
+        'total': len(annotations_df),
+        'by_label': annotations_df['label'].value_counts().to_dict() if 'label' in annotations_df.columns else {},
+        'by_timeframe': annotations_df['timeframe'].value_counts().to_dict() if 'timeframe' in annotations_df.columns else {}
+    }
+    
+    return stats
+
+
 def save_annotation():
     """Сохраняет размеченный паттерн для обучения"""
     if len(st.session_state.points) != 5:
@@ -451,6 +474,10 @@ def save_annotation():
     
     try:
         df = st.session_state.df_data
+        
+        # Получаем значения из session_state (они должны быть сохранены при загрузке)
+        ticker = st.session_state.get('current_ticker', 'UNKNOWN')
+        selected_timeframe = st.session_state.get('current_timeframe', '1h')
         
         # Проверяем порядок точек
         sorted_points = sorted(st.session_state.points.items(), key=lambda x: x[1]['idx'])
