@@ -491,10 +491,34 @@ else:
     # Удаляем кнопки T0-T4, так как они устанавливают None и вызывают ошибки
     # Используем только метод ввода через индекс
     
-    # Отображение графика
-    st.plotly_chart(fig, use_container_width=True, key="chart")
+    # Информация о выборе на графике
+    if st.session_state.selected_candle_idx is not None:
+        st.info(f"📍 На графике выбран индекс: **{st.session_state.selected_candle_idx}** (время: {df.iloc[st.session_state.selected_candle_idx]['time']})")
     
-    # Ввод точек через индексы (альтернативный способ)
+    # Отображение графика с обработкой выбора
+    selected_points = st.plotly_chart(fig, use_container_width=True, key="chart", on_select="rerun")
+    
+    # Обрабатываем выбор точки на графике
+    if selected_points:
+        if 'selection' in selected_points and 'points' in selected_points['selection']:
+            points_list = selected_points['selection']['points']
+            if points_list:
+                selected_point = points_list[0]
+                # Получаем индекс из customdata или из координаты x
+                candle_idx = None
+                if 'customdata' in selected_point and selected_point['customdata']:
+                    # customdata это список [idx, time]
+                    candle_idx = int(selected_point['customdata'][0])
+                elif 'x' in selected_point:
+                    candle_idx = int(selected_point['x'])
+                elif 'pointIndex' in selected_point:
+                    candle_idx = int(selected_point['pointIndex'])
+                
+                if candle_idx is not None and 0 <= candle_idx < len(df):
+                    st.session_state.selected_candle_idx = candle_idx
+                    st.rerun()
+    
+    # Ввод точек через индексы
     with st.expander("🔢 Отметить точки по индексу (альтернативный способ)"):
         point_order = ['T0', 'T1', 'T2', 'T3', 'T4']
         next_point = None
