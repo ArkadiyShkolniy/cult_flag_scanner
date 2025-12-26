@@ -41,8 +41,6 @@ if 'df_data' not in st.session_state:
     st.session_state.df_data = None
 if 'pattern_type' not in st.session_state:
     st.session_state.pattern_type = 'bullish'  # bullish или bearish
-if 'selected_candle_idx' not in st.session_state:
-    st.session_state.selected_candle_idx = None  # Выбранный индекс свечи на графике
 
 
 # ============================================================================
@@ -491,34 +489,10 @@ else:
     # Удаляем кнопки T0-T4, так как они устанавливают None и вызывают ошибки
     # Используем только метод ввода через индекс
     
-    # Информация о выборе на графике
-    if st.session_state.selected_candle_idx is not None:
-        st.info(f"📍 На графике выбран индекс: **{st.session_state.selected_candle_idx}** (время: {df.iloc[st.session_state.selected_candle_idx]['time']})")
+    # Отображение графика
+    st.plotly_chart(fig, use_container_width=True, key="chart")
     
-    # Отображение графика с обработкой выбора
-    selected_points = st.plotly_chart(fig, use_container_width=True, key="chart", on_select="rerun")
-    
-    # Обрабатываем выбор точки на графике
-    if selected_points:
-        if 'selection' in selected_points and 'points' in selected_points['selection']:
-            points_list = selected_points['selection']['points']
-            if points_list:
-                selected_point = points_list[0]
-                # Получаем индекс из customdata или из координаты x
-                candle_idx = None
-                if 'customdata' in selected_point and selected_point['customdata']:
-                    # customdata это список [idx, time]
-                    candle_idx = int(selected_point['customdata'][0])
-                elif 'x' in selected_point:
-                    candle_idx = int(selected_point['x'])
-                elif 'pointIndex' in selected_point:
-                    candle_idx = int(selected_point['pointIndex'])
-                
-                if candle_idx is not None and 0 <= candle_idx < len(df):
-                    st.session_state.selected_candle_idx = candle_idx
-                    st.rerun()
-    
-    # Ввод точек через индексы
+    # Ввод точек через индексы (альтернативный способ)
     with st.expander("🔢 Отметить точки по индексу (альтернативный способ)"):
         point_order = ['T0', 'T1', 'T2', 'T3', 'T4']
         next_point = None
@@ -536,22 +510,13 @@ else:
             
             col_a, col_b = st.columns(2)
             with col_a:
-                # Используем выбранный индекс или значение по умолчанию
-                default_idx = st.session_state.selected_candle_idx if st.session_state.selected_candle_idx is not None else (len(df) // 2)
-                default_idx = max(0, min(default_idx, len(df) - 1))  # Ограничиваем диапазон
-                
                 idx_input = st.number_input(
                     f"Индекс свечи для {next_point}",
                     min_value=0,
                     max_value=len(df) - 1,
-                    value=default_idx,
-                    key=f'idx_{next_point}',
-                    help="💡 Кликните на графике по нужной свече, и индекс автоматически подтянется сюда"
+                    value=len(df) // 2,
+                    key=f'idx_{next_point}'
                 )
-                
-                # Показываем выбранный индекс если он есть
-                if st.session_state.selected_candle_idx is not None:
-                    st.info(f"📍 Выбранный индекс на графике: {st.session_state.selected_candle_idx}")
             
             with col_b:
                 if st.button(f"Отметить {next_point}", key=f'btn_{next_point}'):
@@ -572,8 +537,6 @@ else:
                         'price': price,
                         'time': df.iloc[idx_input]['time']
                     }
-                    # Сбрасываем выбранный индекс после использования
-                    st.session_state.selected_candle_idx = None
                     st.success(f"✅ Точка {next_point} отмечена!")
                     st.rerun()
         else:
