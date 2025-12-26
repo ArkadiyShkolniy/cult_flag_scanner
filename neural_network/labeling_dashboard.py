@@ -104,9 +104,11 @@ def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'
     }
     
     for point_name in ['T0', 'T1', 'T2', 'T3', 'T4']:
-        if point_name in points:
+        if point_name in points and points[point_name] is not None:
             point_data = points[point_name]
-            fig.add_trace(
+            # Проверяем что point_data является словарем с нужными ключами
+            if isinstance(point_data, dict) and 'idx' in point_data and 'price' in point_data:
+                fig.add_trace(
                 go.Scatter(
                     x=[point_data['idx']],
                     y=[point_data['price']],
@@ -130,15 +132,18 @@ def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'
             )
     
     # Линии между точками (если есть минимум 2 точки)
-    if len(points) >= 2:
-        sorted_points = sorted(points.items(), key=lambda x: x[1]['idx'])
+    # Фильтруем только валидные точки (не None)
+    valid_points = {k: v for k, v in points.items() if v is not None and isinstance(v, dict) and 'idx' in v and 'price' in v}
+    
+    if len(valid_points) >= 2:
+        sorted_points = sorted(valid_points.items(), key=lambda x: x[1]['idx'])
         if len(sorted_points) >= 2:
             # Флагшток T0-T1
-            if 'T0' in points and 'T1' in points:
+            if 'T0' in valid_points and 'T1' in valid_points:
                 fig.add_trace(
                     go.Scatter(
-                        x=[points['T0']['idx'], points['T1']['idx']],
-                        y=[points['T0']['price'], points['T1']['price']],
+                        x=[valid_points['T0']['idx'], valid_points['T1']['idx']],
+                        y=[valid_points['T0']['price'], valid_points['T1']['price']],
                         mode='lines',
                         line=dict(color='lime', width=3, dash='solid'),
                         name='Флагшток (T0-T1)',
@@ -148,11 +153,11 @@ def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'
                 )
             
             # Линия T1-T3 (если обе точки есть)
-            if 'T1' in points and 'T3' in points:
+            if 'T1' in valid_points and 'T3' in valid_points:
                 fig.add_trace(
                     go.Scatter(
-                        x=[points['T1']['idx'], points['T3']['idx']],
-                        y=[points['T1']['price'], points['T3']['price']],
+                        x=[valid_points['T1']['idx'], valid_points['T3']['idx']],
+                        y=[valid_points['T1']['price'], valid_points['T3']['price']],
                         mode='lines',
                         line=dict(color='red', width=2, dash='dash'),
                         name='Линия T1-T3',
@@ -162,11 +167,11 @@ def create_interactive_chart(df, points, pattern_type, ticker='', timeframe='1h'
                 )
             
             # Линия T2-T4 (если обе точки есть)
-            if 'T2' in points and 'T4' in points:
+            if 'T2' in valid_points and 'T4' in valid_points:
                 fig.add_trace(
                     go.Scatter(
-                        x=[points['T2']['idx'], points['T4']['idx']],
-                        y=[points['T2']['price'], points['T4']['price']],
+                        x=[valid_points['T2']['idx'], valid_points['T4']['idx']],
+                        y=[valid_points['T2']['price'], valid_points['T4']['price']],
                         mode='lines',
                         line=dict(color='cyan', width=2, dash='dash'),
                         name='Линия T2-T4',
@@ -300,7 +305,11 @@ def process_point_selection(selected_points, df):
 
 def save_annotation():
     """Сохраняет размеченный паттерн для обучения"""
-    if len(st.session_state.points) != 5:
+    # Фильтруем только валидные точки
+    valid_points = {k: v for k, v in st.session_state.points.items() 
+                   if v is not None and isinstance(v, dict) and 'idx' in v and 'price' in v}
+    
+    if len(valid_points) != 5:
         st.error("❌ Отметьте все 5 точек!")
         return
     
@@ -312,7 +321,7 @@ def save_annotation():
         selected_timeframe = st.session_state.get('current_timeframe', '1h')
         
         # Проверяем порядок точек
-        sorted_points = sorted(st.session_state.points.items(), key=lambda x: x[1]['idx'])
+        sorted_points = sorted(valid_points.items(), key=lambda x: x[1]['idx'])
         point_names = [p[0] for p in sorted_points]
         
         if point_names != ['T0', 'T1', 'T2', 'T3', 'T4']:
@@ -333,11 +342,11 @@ def save_annotation():
         pattern_info = {
             'pattern': 'FLAG_0_1_2_3_4' if label == 1 else 'BEARISH_FLAG_0_1_2_3_4',
             'timeframe': selected_timeframe,
-            't0': st.session_state.points['T0'],
-            't1': st.session_state.points['T1'],
-            't2': st.session_state.points['T2'],
-            't3': st.session_state.points['T3'],
-            't4': st.session_state.points['T4'],
+            't0': valid_points['T0'],
+            't1': valid_points['T1'],
+            't2': valid_points['T2'],
+            't3': valid_points['T3'],
+            't4': valid_points['T4'],
             'labeled_manually': True
         }
         
@@ -449,8 +458,12 @@ with st.sidebar:
         st.session_state.points = {}
         st.rerun()
     
-    if st.button("💾 Сохранить для обучения", type="primary", disabled=len(st.session_state.points) < 5):
-        if len(st.session_state.points) == 5:
+    # Подсчитываем только валидные точки
+    valid_points_count = sum(1 for v in st.session_state.points.values() 
+                            if v is not None and isinstance(v, dict) and 'idx' in v)
+    
+    if st.button("💾 Сохранить для обучения", type="primary", disabled=valid_points_count < 5):
+        if valid_points_count == 5:
             save_annotation()
         else:
             st.warning("⚠️ Отметьте все 5 точек!")
@@ -473,26 +486,8 @@ else:
     st.subheader("📍 Отметка точек")
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    with col1:
-        if st.button("T0", disabled='T0' in st.session_state.points):
-            st.session_state.points['T0'] = None  # Заполнится при выборе
-            st.info("Кликните на графике по начальной точке (T0)")
-    with col2:
-        if st.button("T1", disabled='T1' in st.session_state.points):
-            st.session_state.points['T1'] = None
-            st.info("Кликните на графике по точке T1")
-    with col3:
-        if st.button("T2", disabled='T2' in st.session_state.points):
-            st.session_state.points['T2'] = None
-            st.info("Кликните на графике по точке T2")
-    with col4:
-        if st.button("T3", disabled='T3' in st.session_state.points):
-            st.session_state.points['T3'] = None
-            st.info("Кликните на графике по точке T3")
-    with col5:
-        if st.button("T4", disabled='T4' in st.session_state.points):
-            st.session_state.points['T4'] = None
-            st.info("Кликните на графике по точке T4")
+    # Удаляем кнопки T0-T4, так как они устанавливают None и вызывают ошибки
+    # Используем только метод ввода через индекс
     
     # Отображение графика
     st.plotly_chart(fig, use_container_width=True, key="chart")
@@ -502,7 +497,11 @@ else:
         point_order = ['T0', 'T1', 'T2', 'T3', 'T4']
         next_point = None
         for point_name in point_order:
-            if point_name not in st.session_state.points:
+            # Проверяем что точка либо отсутствует, либо None, либо невалидная
+            if point_name not in st.session_state.points or \
+               st.session_state.points[point_name] is None or \
+               not isinstance(st.session_state.points[point_name], dict) or \
+               'idx' not in st.session_state.points[point_name]:
                 next_point = point_name
                 break
         
@@ -544,36 +543,43 @@ else:
             st.info("Все точки отмечены!")
     
     # Показываем статус разметки
+    def is_point_valid(point_name):
+        return (point_name in st.session_state.points and 
+                st.session_state.points[point_name] is not None and
+                isinstance(st.session_state.points[point_name], dict) and
+                'idx' in st.session_state.points[point_name])
+    
     col1, col2, col3 = st.columns(3)
     with col1:
-        status_t0 = "✅" if 'T0' in st.session_state.points else "⏳"
+        status_t0 = "✅" if is_point_valid('T0') else "⏳"
         st.metric("T0", status_t0)
     with col2:
-        status_t1 = "✅" if 'T1' in st.session_state.points else "⏳"
+        status_t1 = "✅" if is_point_valid('T1') else "⏳"
         st.metric("T1", status_t1)
     with col3:
-        status_t2 = "✅" if 'T2' in st.session_state.points else "⏳"
+        status_t2 = "✅" if is_point_valid('T2') else "⏳"
         st.metric("T2", status_t2)
     
     col4, col5 = st.columns(2)
     with col4:
-        status_t3 = "✅" if 'T3' in st.session_state.points else "⏳"
+        status_t3 = "✅" if is_point_valid('T3') else "⏳"
         st.metric("T3", status_t3)
     with col5:
-        status_t4 = "✅" if 'T4' in st.session_state.points else "⏳"
+        status_t4 = "✅" if is_point_valid('T4') else "⏳"
         st.metric("T4", status_t4)
     
     # Показываем информацию о точках
-    if st.session_state.points:
+    valid_points = {k: v for k, v in st.session_state.points.items() if v is not None and isinstance(v, dict) and 'idx' in v}
+    if valid_points:
         st.subheader("📍 Отмеченные точки")
         points_df = pd.DataFrame([
             {
                 'Точка': point_name,
                 'Индекс': point_data['idx'],
                 'Цена': f"{point_data['price']:.2f}",
-                'Время': str(point_data['time'])
+                'Время': str(point_data.get('time', 'N/A'))
             }
-            for point_name, point_data in sorted(st.session_state.points.items())
+            for point_name, point_data in sorted(valid_points.items(), key=lambda x: x[1]['idx'])
         ])
         st.dataframe(points_df, use_container_width=True, hide_index=True)
     
