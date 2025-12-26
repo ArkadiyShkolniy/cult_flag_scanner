@@ -23,27 +23,35 @@ load_dotenv()
 SCAN_INTERVAL = 60 * 10
 
 # Список фьючерсов для сканирования
+# Формат: {ticker, class_code, name}
+# Примечание: Тикеры фьючерсов меняются каждый месяц (H/M/U/Z - месяцы экспирации)
+# Для актуальных тикеров проверьте на бирже или используйте API для получения активных контрактов
 FUTURES_TO_SCAN = [
-    # Индекс Мосбиржи (примеры тикеров, могут меняться)
+    # Индекс Мосбиржи (MX - базовый актив)
     {'ticker': 'MXH6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи H6'},
     {'ticker': 'MXM6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи M6'},
     {'ticker': 'MXU6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи U6'},
-    # Индекс РТС
+    {'ticker': 'MXZ6', 'class_code': 'SPBFUT', 'name': 'Индекс Мосбиржи Z6'},
+    # Индекс РТС (RTS - базовый актив)
     {'ticker': 'RTSH6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС H6'},
     {'ticker': 'RTSM6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС M6'},
     {'ticker': 'RTSU6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС U6'},
-    # Золото
+    {'ticker': 'RTSZ6', 'class_code': 'SPBFUT', 'name': 'Индекс РТС Z6'},
+    # Золото (GOLD - базовый актив)
     {'ticker': 'GOLDH6', 'class_code': 'SPBFUT', 'name': 'Золото H6'},
     {'ticker': 'GOLDM6', 'class_code': 'SPBFUT', 'name': 'Золото M6'},
     {'ticker': 'GOLDU6', 'class_code': 'SPBFUT', 'name': 'Золото U6'},
-    # Нефть
+    {'ticker': 'GOLDZ6', 'class_code': 'SPBFUT', 'name': 'Золото Z6'},
+    # Нефть Brent (BR - базовый актив)
     {'ticker': 'BRH6', 'class_code': 'SPBFUT', 'name': 'Нефть BR H6'},
     {'ticker': 'BRM6', 'class_code': 'SPBFUT', 'name': 'Нефть BR M6'},
     {'ticker': 'BRU6', 'class_code': 'SPBFUT', 'name': 'Нефть BR U6'},
-    # Серебро
+    {'ticker': 'BRZ6', 'class_code': 'SPBFUT', 'name': 'Нефть BR Z6'},
+    # Серебро (SILV - базовый актив)
     {'ticker': 'SILVH6', 'class_code': 'SPBFUT', 'name': 'Серебро H6'},
     {'ticker': 'SILVM6', 'class_code': 'SPBFUT', 'name': 'Серебро M6'},
     {'ticker': 'SILVU6', 'class_code': 'SPBFUT', 'name': 'Серебро U6'},
+    {'ticker': 'SILVZ6', 'class_code': 'SPBFUT', 'name': 'Серебро Z6'},
 ]
 
 
