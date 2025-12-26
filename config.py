@@ -1,4 +1,4 @@
-from tinkoff.invest import CandleInterval
+from t_tech.invest import CandleInterval
 
 TIMEFRAMES = {
     '5m': {
