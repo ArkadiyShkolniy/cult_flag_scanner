@@ -58,6 +58,7 @@ def get_future_instrument(scanner, ticker, class_code):
                 'class_code': class_code
             }
     except Exception as e:
+        print(f"      ⚠️ Не удалось загрузить {ticker}: {str(e)[:100]}")
         return None
 
 
