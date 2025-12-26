@@ -17,7 +17,7 @@ class BearishFlagScanner:
     - T2: Первый откат (High)
     - T3: Второй минимум (Low, >= T1)
     - T4: Второй откат (High, <= T2)
-    - Пробой: Цена закрытия пробивает линию поддержки T1-T3 вниз
+    - Сигнал: Генерируется при формировании T4 (паттерн готов к пробою)
     """
     
     def __init__(self, token: str):
@@ -518,64 +518,97 @@ class BearishFlagScanner:
             if debug:
                 print(f"   ✅ Линии не пересекают тела и тени свечей")
 
-            # --- ПРОБОЙ ---
-            # Пробой поддержки (T1-T3) ВНИЗ
-            if debug:
-                print(f"\n{'='*60}")
-                print("ПРОВЕРКА ПРОБОЯ")
-                print(f"{'='*60}")
-            
+            # 7. Проверка что T4 сформирована недавно (сигнал генерируется при формировании T4)
             current_idx = len(df) - 1
             current_price = df.iloc[-1]['close']
             
-            if (t3_idx - t1_idx) == 0:
+            # Проверяем, что T4 близка к текущей свече (паттерн только что сформировался)
+            candles_after_t4 = current_idx - t4_idx
+            
+            if debug:
+                print(f"\n{'='*60}")
+                print("ПРОВЕРКА СВЕЖЕСТИ ПАТТЕРНА")
+                print(f"{'='*60}")
+                print(f"Текущий индекс: {current_idx}, T4 индекс: {t4_idx}")
+                print(f"Свечей после T4: {candles_after_t4}")
+            
+            # T4 должна быть на последней свече или очень близко к ней (максимум 2-3 свечи после)
+            max_candles_after_t4 = 3  # Допускаем максимум 3 свечи после T4
+            
+            if candles_after_t4 > max_candles_after_t4:
                 if debug:
-                    print(f"❌ Деление на ноль при расчете наклона T1-T3")
+                    print(f"   ❌ T4 слишком старая: {candles_after_t4} свечей после T4 (максимум {max_candles_after_t4})")
                 return []
+            if debug:
+                print(f"   ✅ T4 свежая, паттерн только что сформировался")
             
-            slope = (t3 - t1) / (t3_idx - t1_idx)
-            support_price_now = t1 + slope * (current_idx - t1_idx)
+            # --- ФИЛЬТРЫ КАЧЕСТВА ПАТТЕРНА ---
+            if debug:
+                print(f"\n{'='*60}")
+                print("ПРОВЕРКА КАЧЕСТВА ПАТТЕРНА")
+                print(f"{'='*60}")
+            
+            # 8.1. Проверка объема на флагштоке (импульсе)
+            avg_volume = df['volume'].mean()
+            pole_volumes = df.iloc[t0_idx:t1_idx+1]['volume']
+            avg_pole_volume = pole_volumes.mean()
             
             if debug:
-                print(f"Линия поддержки: y = {t1:.2f} + {slope:.4f} * (idx - {t1_idx})")
-                print(f"Текущая цена: {current_price:.2f}")
-                print(f"Линия поддержки на текущей свече: {support_price_now:.2f}")
+                print(f"\n8.1. Средний объем на флагштоке: {avg_pole_volume:.0f} (средний общий: {avg_volume:.0f})")
             
-            # Ищем пробой Low свечей вниз через поддержку
-            max_pattern_idx = max(t3_idx, t4_idx)
-            breakout_found = False
-            breakout_idx = None
+            # 8.2. Проверка объема на T4 (завершение формирования паттерна)
+            t4_volume = df.iloc[t4_idx]['volume']
             
             if debug:
-                print(f"\nИщем пробой после max(T3={t3_idx}, T4={t4_idx}) = {max_pattern_idx}")
-                print(f"Проверяем свечи от {max_pattern_idx + 1} до {current_idx}:")
+                print(f"\n8.2. Объем на T4: {t4_volume:.0f} (средний: {avg_volume:.0f})")
             
-            for check_idx in range(max_pattern_idx + 1, min(current_idx + 1, len(df))):
-                support_at_check = t1 + slope * (check_idx - t1_idx)
-                candle_low = df.iloc[check_idx]['low']
+            # Рассчитываем оценку качества паттерна
+            quality_score = 0
+            pole_volume_ratio = avg_pole_volume / avg_volume if avg_volume > 0 else 1
+            t4_volume_ratio = t4_volume / avg_volume if avg_volume > 0 else 1
+            
+            # Баллы за объем на флагштоке
+            if pole_volume_ratio > 1.5:
+                quality_score += 30
+            elif pole_volume_ratio > 1.2:
+                quality_score += 20
+            elif pole_volume_ratio > 1.1:
+                quality_score += 10
+            
+            # Баллы за объем на T4
+            if t4_volume_ratio > 1.2:
+                quality_score += 20
+            elif t4_volume_ratio > 0.9:
+                quality_score += 10
+            
+            # Баллы за соотношение высота/ширина флага
+            flag_width = t4_idx - t1_idx
+            if flag_width > 0:
+                aspect_ratio = pole_height / flag_width
+                if 0.01 <= aspect_ratio <= 0.1:  # Оптимальное соотношение
+                    quality_score += 30
+                elif 0.005 <= aspect_ratio <= 0.15:
+                    quality_score += 20
+            
+            # Баллы за свежесть паттерна (чем свежее, тем лучше)
+            if candles_after_t4 == 0:
+                quality_score += 20  # T4 на последней свече
+            elif candles_after_t4 <= 1:
+                quality_score += 15
+            elif candles_after_t4 <= 2:
+                quality_score += 10
+            
+            # Рассчитываем линию поддержки для информации (но не проверяем пробой)
+            if (t3_idx - t1_idx) != 0:
+                slope = (t3 - t1) / (t3_idx - t1_idx)
+                support_price_now = t1 + slope * (current_idx - t1_idx)
+            else:
+                support_price_now = t1
+            
+            if candles_after_t4 <= max_candles_after_t4:
                 if debug:
-                    print(f"  Свеча {check_idx}: low={candle_low:.2f}, поддержка={support_at_check:.2f}, пробой: {candle_low < support_at_check}")
-                if candle_low < support_at_check:
-                    breakout_found = True
-                    breakout_idx = check_idx
-                    if debug:
-                        print(f"  ✅ ПРОБОЙ НАЙДЕН на свече {breakout_idx}!")
-                    break
-            
-            if not breakout_found:
-                if debug:
-                    print(f"\n❌ Пробой не найден")
-                return []
-            
-            candles_after = current_idx - max_pattern_idx
-            if debug:
-                print(f"\nСвечей после паттерна: {candles_after}")
-            
-            if 1 <= candles_after <= 20:
-                if debug:
-                    print(f"✅ Пробой недавний (1-20 свечей)")
                     print(f"\n{'='*60}")
-                    print("✅ МЕДВЕЖИЙ ПАТТЕРН НАЙДЕН!")
+                    print(f"✅ МЕДВЕЖИЙ ПАТТЕРН НАЙДЕН! (Качество: {quality_score}/100)")
                     print(f"{'='*60}")
                 return [{
                     'pattern': 'BEARISH_FLAG_0_1_2_3_4',
@@ -586,12 +619,15 @@ class BearishFlagScanner:
                     't3': {'idx': t3_idx, 'price': t3, 'time': df.iloc[t3_idx]['time']},
                     't4': {'idx': t4_idx, 'price': t4, 'time': df.iloc[t4_idx]['time']},
                     'current_price': current_price,
-                    'resistance_line': support_price_now, # Для графика это линия пробоя
-                    'pole_height': pole_height
+                    'resistance_line': support_price_now,  # Для графика это линия поддержки
+                    'pole_height': pole_height,
+                    'quality_score': quality_score,
+                    'pole_volume_ratio': pole_volume_ratio,
+                    't4_volume_ratio': t4_volume_ratio
                 }]
             else:
                 if debug:
-                    print(f"❌ Пробой не недавний: {candles_after} свечей после паттерна (максимум 20)")
+                    print(f"❌ T4 слишком старая: {candles_after_t4} свечей после T4 (максимум {max_candles_after_t4})")
                 return []
 
         except Exception as e:

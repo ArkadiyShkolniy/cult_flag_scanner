@@ -529,134 +529,78 @@ class BullishFlagScanner:
             if debug:
                 print(f"   ✅ Линии не пересекают тела и тени свечей")
             
-            # 7. Проверка линии тренда T1-T3 (верхняя граница флага)
-            # Уравнение прямой через точки (t1_idx, t1) и (t3_idx, t3)
+            # 7. Проверка что T4 сформирована недавно (сигнал генерируется при формировании T4)
             current_idx = len(df) - 1
             current_price = df.iloc[-1]['close']
             
-            if (t3_idx - t1_idx) == 0:
-                if debug:
-                    print(f"\n❌ Деление на ноль при расчете наклона T1-T3")
-                return []  # Деление на ноль
-            
-            slope = (t3 - t1) / (t3_idx - t1_idx)
-            resistance_price_now = t1 + slope * (current_idx - t1_idx)
+            # Проверяем, что T4 близка к текущей свече (паттерн только что сформировался)
+            candles_after_t4 = current_idx - t4_idx
             
             if debug:
                 print(f"\n{'='*60}")
-                print("ПРОВЕРКА ПРОБОЯ")
+                print("ПРОВЕРКА СВЕЖЕСТИ ПАТТЕРНА")
                 print(f"{'='*60}")
-                print(f"Линия сопротивления: y = {t1:.2f} + {slope:.4f} * (idx - {t1_idx})")
-                print(f"Текущая цена: {current_price:.2f}")
-                print(f"Линия сопротивления на текущей свече: {resistance_price_now:.2f}")
+                print(f"Текущий индекс: {current_idx}, T4 индекс: {t4_idx}")
+                print(f"Свечей после T4: {candles_after_t4}")
             
-            # СИГНАЛ: Проверяем пробой линии сопротивления T1-T3
-            # Ищем пробой среди последних свечей (проверяем high свечей)
-            max_pattern_idx = max(t3_idx, t4_idx)
-            breakout_found = False
-            breakout_idx = None
+            # T4 должна быть на последней свече или очень близко к ней (максимум 2-3 свечи после)
+            max_candles_after_t4 = 3  # Допускаем максимум 3 свечи после T4
             
-            if debug:
-                print(f"\nИщем пробой после max(T3={t3_idx}, T4={t4_idx}) = {max_pattern_idx}")
-                print(f"Проверяем свечи от {max_pattern_idx + 1} до {current_idx}:")
-            
-            # Проверяем свечи после паттерна (от max_pattern_idx до текущей)
-            for check_idx in range(max_pattern_idx + 1, min(current_idx + 1, len(df))):
-                # Рассчитываем значение линии сопротивления для этой свечи
-                resistance_at_check = t1 + slope * (check_idx - t1_idx)
-                candle_high = df.iloc[check_idx]['high']
+            if candles_after_t4 > max_candles_after_t4:
                 if debug:
-                    print(f"  Свеча {check_idx}: high={candle_high:.2f}, сопротивление={resistance_at_check:.2f}, пробой: {candle_high > resistance_at_check}")
-                if candle_high > resistance_at_check:
-                    breakout_found = True
-                    breakout_idx = check_idx
-                    if debug:
-                        print(f"  ✅ ПРОБОЙ НАЙДЕН на свече {breakout_idx}!")
-                    break
-            
-            if not breakout_found:
-                if debug:
-                    print(f"\n❌ Пробой не найден")
+                    print(f"   ❌ T4 слишком старая: {candles_after_t4} свечей после T4 (максимум {max_candles_after_t4})")
                 return []
+            if debug:
+                print(f"   ✅ T4 свежая, паттерн только что сформировался")
             
-            # --- ФИЛЬТРЫ КАЧЕСТВА ПРОБОЯ ---
+            # --- ФИЛЬТРЫ КАЧЕСТВА ПАТТЕРНА ---
             if debug:
                 print(f"\n{'='*60}")
-                print("ПРОВЕРКА КАЧЕСТВА ПРОБОЯ")
+                print("ПРОВЕРКА КАЧЕСТВА ПАТТЕРНА")
                 print(f"{'='*60}")
             
-            # 8.1. Проверка силы пробоя
-            resistance_at_breakout = t1 + slope * (breakout_idx - t1_idx)
-            breakout_strength = ((df.iloc[breakout_idx]['high'] - resistance_at_breakout) / resistance_at_breakout) * 100
-            min_breakout_strength = 0.3  # Минимум 0.3% выше линии
-            
-            if debug:
-                print(f"\n8.1. Сила пробоя: {breakout_strength:.2f}% (минимум {min_breakout_strength}%)")
-            if breakout_strength < min_breakout_strength:
-                if debug:
-                    print(f"   ❌ Слабый пробой: {breakout_strength:.2f}% < {min_breakout_strength}%")
-                return []
-            if debug:
-                print(f"   ✅ Пробой достаточно сильный")
-            
-            # 8.2. Проверка объема на пробое
+            # 8.1. Проверка объема на флагштоке (импульсе)
             avg_volume = df['volume'].mean()
-            breakout_volume = df.iloc[breakout_idx]['volume']
-            min_volume_multiplier = 1.15  # Объем должен быть минимум на 15% выше среднего
-            
-            if debug:
-                print(f"\n8.2. Объем на пробое: {breakout_volume:.0f} (средний: {avg_volume:.0f}, требуется: {avg_volume * min_volume_multiplier:.0f})")
-            if breakout_volume < avg_volume * min_volume_multiplier:
-                if debug:
-                    print(f"   ❌ Слабый объем на пробое: {breakout_volume:.0f} < {avg_volume * min_volume_multiplier:.0f}")
-                return []
-            if debug:
-                print(f"   ✅ Объем на пробое достаточен")
-            
-            # 8.3. Проверка объема на флагштоке (импульсе)
             pole_volumes = df.iloc[t0_idx:t1_idx+1]['volume']
             avg_pole_volume = pole_volumes.mean()
             min_pole_volume_multiplier = 1.1  # Объем на импульсе должен быть выше среднего
             
             if debug:
-                print(f"\n8.3. Средний объем на флагштоке: {avg_pole_volume:.0f} (средний общий: {avg_volume:.0f})")
+                print(f"\n8.1. Средний объем на флагштоке: {avg_pole_volume:.0f} (средний общий: {avg_volume:.0f})")
             if avg_pole_volume < avg_volume * min_pole_volume_multiplier:
                 if debug:
                     print(f"   ⚠️ Объем на флагштоке слабоват, но продолжаем")
                 # Это предупреждение, не критично
             
-            candles_after_pattern = current_idx - max_pattern_idx
+            # 8.2. Проверка объема на T4 (завершение формирования паттерна)
+            t4_volume = df.iloc[t4_idx]['volume']
+            min_volume_multiplier = 0.8  # Объем на T4 не должен быть слишком низким (минимум 80% от среднего)
+            
             if debug:
-                print(f"\nСвечей после паттерна: {candles_after_pattern}")
-            if 1 <= candles_after_pattern <= 20:
+                print(f"\n8.2. Объем на T4: {t4_volume:.0f} (средний: {avg_volume:.0f}, минимум: {avg_volume * min_volume_multiplier:.0f})")
+            # Не критично, только предупреждение
+            
+            if candles_after_t4 <= max_candles_after_t4:
                 if debug:
                     print(f"✅ Пробой недавний (1-20 свечей)")
                 
                 # Рассчитываем оценку качества паттерна
                 quality_score = 0
-                volume_ratio = breakout_volume / avg_volume if avg_volume > 0 else 1
                 pole_volume_ratio = avg_pole_volume / avg_volume if avg_volume > 0 else 1
-                
-                # Баллы за силу пробоя
-                if breakout_strength > 1.0:
-                    quality_score += 30
-                elif breakout_strength > 0.5:
-                    quality_score += 15
-                else:
-                    quality_score += 5
-                
-                # Баллы за объем на пробое
-                if volume_ratio > 2.0:
-                    quality_score += 30
-                elif volume_ratio > 1.5:
-                    quality_score += 20
-                elif volume_ratio > 1.2:
-                    quality_score += 10
+                t4_volume_ratio = t4_volume / avg_volume if avg_volume > 0 else 1
                 
                 # Баллы за объем на флагштоке
                 if pole_volume_ratio > 1.5:
-                    quality_score += 20
+                    quality_score += 30
                 elif pole_volume_ratio > 1.2:
+                    quality_score += 20
+                elif pole_volume_ratio > 1.1:
+                    quality_score += 10
+                
+                # Баллы за объем на T4
+                if t4_volume_ratio > 1.2:
+                    quality_score += 20
+                elif t4_volume_ratio > 0.9:
                     quality_score += 10
                 
                 # Баллы за соотношение высота/ширина флага
@@ -664,7 +608,24 @@ class BullishFlagScanner:
                 if flag_width > 0:
                     aspect_ratio = pole_height / flag_width
                     if 0.01 <= aspect_ratio <= 0.1:  # Оптимальное соотношение
+                        quality_score += 30
+                    elif 0.005 <= aspect_ratio <= 0.15:
                         quality_score += 20
+                
+                # Баллы за свежесть паттерна (чем свежее, тем лучше)
+                if candles_after_t4 == 0:
+                    quality_score += 20  # T4 на последней свече
+                elif candles_after_t4 <= 1:
+                    quality_score += 15
+                elif candles_after_t4 <= 2:
+                    quality_score += 10
+                
+                # Рассчитываем линию сопротивления для информации (но не проверяем пробой)
+                if (t3_idx - t1_idx) != 0:
+                    slope = (t3 - t1) / (t3_idx - t1_idx)
+                    resistance_price_now = t1 + slope * (current_idx - t1_idx)
+                else:
+                    resistance_price_now = t1
                 
                 if debug:
                     print(f"\n{'='*60}")
@@ -683,8 +644,8 @@ class BullishFlagScanner:
                     'resistance_line': resistance_price_now,
                     'pole_height': pole_height,
                     'quality_score': quality_score,
-                    'breakout_strength': breakout_strength,
-                    'breakout_volume_ratio': volume_ratio
+                    'pole_volume_ratio': pole_volume_ratio,
+                    't4_volume_ratio': t4_volume_ratio
                 }]
             else:
                 if debug:
