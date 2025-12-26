@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import io
 from PIL import Image
-import cv2
 
 
 class FlagPatternDataset(Dataset):
