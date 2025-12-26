@@ -41,6 +41,8 @@ if 'df_data' not in st.session_state:
     st.session_state.df_data = None
 if 'pattern_type' not in st.session_state:
     st.session_state.pattern_type = 'bullish'  # bullish или bearish
+if 'selected_candle_idx' not in st.session_state:
+    st.session_state.selected_candle_idx = None  # Выбранный индекс свечи на графике
 
 
 # ============================================================================
@@ -510,13 +512,22 @@ else:
             
             col_a, col_b = st.columns(2)
             with col_a:
+                # Используем выбранный индекс или значение по умолчанию
+                default_idx = st.session_state.selected_candle_idx if st.session_state.selected_candle_idx is not None else (len(df) // 2)
+                default_idx = max(0, min(default_idx, len(df) - 1))  # Ограничиваем диапазон
+                
                 idx_input = st.number_input(
                     f"Индекс свечи для {next_point}",
                     min_value=0,
                     max_value=len(df) - 1,
-                    value=len(df) // 2,
-                    key=f'idx_{next_point}'
+                    value=default_idx,
+                    key=f'idx_{next_point}',
+                    help="💡 Кликните на графике по нужной свече, и индекс автоматически подтянется сюда"
                 )
+                
+                # Показываем выбранный индекс если он есть
+                if st.session_state.selected_candle_idx is not None:
+                    st.info(f"📍 Выбранный индекс на графике: {st.session_state.selected_candle_idx}")
             
             with col_b:
                 if st.button(f"Отметить {next_point}", key=f'btn_{next_point}'):
@@ -537,6 +548,8 @@ else:
                         'price': price,
                         'time': df.iloc[idx_input]['time']
                     }
+                    # Сбрасываем выбранный индекс после использования
+                    st.session_state.selected_candle_idx = None
                     st.success(f"✅ Точка {next_point} отмечена!")
                     st.rerun()
         else:
