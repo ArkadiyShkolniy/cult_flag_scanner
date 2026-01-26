@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+.cursor_refresh
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+debug_log.txt
+prod_log.txt
+
+# Output files
+*.html
+*.png
+*.jpg
+*.jpeg
+
+# Data
+data/
+*.csv
+*.xlsx
+
+# Neural Network Models (не коммитим, обучаем на сервере)
+*.pth
+*.pkl
+*.pt
+*.h5
+neural_network/models/
+neural_network/training_log.txt
+neural_network/models/*.pth
+neural_network/models/*.pkl
+neural_network/models/*.json
+
+# Trading Bot working files
+trading_bot/trades_active.json
+trading_bot/trades_history.json
+trading_bot/trades_history.json.bak
+trading_bot/trades_history.json.backup
+trading_bot/pattern_history.json
+trading_bot/training_data/
+trading_bot/data_prod/
+
+# Docker
+.dockerignore

@@ -1,0 +1,14 @@
+# t-tech-investments устанавливается отдельно в Dockerfile из git
+pandas
+numpy
+python-dotenv
+streamlit
+plotly
+matplotlib
+torch
+torchvision
+pillow
+tqdm
+requests
+scikit-learn
+joblib

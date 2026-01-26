@@ -1,0 +1,69 @@
+services:
+  # Сканер (мониторинг Telegram + сбор базы)
+  scanner:
+    build: .
+    container_name: flag_scanner
+    entrypoint: ["/bin/bash", "/app/install_deps.sh"]
+    command: python3 service.py
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  # Дашборд для разметки (обучение нейросети + сканеры)
+  labeling:
+    build: .
+    container_name: flag_labeling
+    entrypoint: ["/bin/bash", "/app/install_deps.sh"]
+    command: streamlit run neural_network/labeling_dashboard.py --server.port=8501 --server.address=0.0.0.0
+    volumes:
+      - .:/app
+    ports:
+      - "8505:8501"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  # ТОРГОВЫЙ РОБОТ (Paper Trading + AI)
+  trading-bot:
+    build: .
+    container_name: trading_bot
+    entrypoint: ["/bin/bash", "/app/install_deps.sh"]
+    command: python3 service.py --mode debug --enable-trading
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - DEBUG_MODE=True       # 1 лот
+      - DRY_RUN=True          # Без денег
+      - SCAN_INTERVAL_SEC=60  # Скан раз в минуту
+      - USE_AI_FILTER=True    # Использовать ML модель
+      - PYTHONUNBUFFERED=1
+      - DATA_DIR=trading_bot
+      - BOT_ENV=DEBUG
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # Дашборд Торгового Робота
+  trading-dashboard:
+    build: .
+    container_name: trading_dashboard
+    entrypoint: ["/bin/bash", "/app/install_deps.sh"]
+    command: streamlit run trading_bot/trading_dashboard.py --server.port=8506 --server.address=0.0.0.0
+    volumes:
+      - .:/app
+    ports:
+      - "8506:8506"
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=trading_bot
+      - BOT_ENV=DEBUG
+    restart: unless-stopped

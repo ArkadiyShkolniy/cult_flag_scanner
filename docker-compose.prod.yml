@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Основной сервис сканера (PROD)
+  scanner_prod:
+    build: .
+    container_name: cult_bot_prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Moscow
+      - BOT_ENV=PROD
+      - DATA_DIR=trading_bot/data_prod
+    volumes:
+      - .:/app
+    entrypoint: ["/bin/bash", "/app/install_deps.sh"]
+    # Запуск в режиме PROD с включенной торговлей
+    command: python3 service.py --mode prod --enable-trading
+
+  # Дашборд (PROD)
+  dashboard_prod:
+    build: .
+    container_name: dashboard_prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Moscow
+      - BOT_ENV=PROD
+      - DATA_DIR=trading_bot/data_prod
+    volumes:
+      - .:/app
+    ports:
+      - "8502:8501"  # Используем порт 8502 для PROD дашборда
+    entrypoint: ["/bin/bash", "/app/install_deps.sh"]
+    command: streamlit run trading_bot/trading_dashboard.py
