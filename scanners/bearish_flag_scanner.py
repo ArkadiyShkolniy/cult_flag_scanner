@@ -291,6 +291,14 @@ class BearishFlagScanner:
                 
         return unique_patterns
 
+    @staticmethod
+    def _line_price_at_idx(idx_start, price_start, idx_end, price_end, idx_current):
+        """Цена на линии (start->end) в точке idx_current."""
+        if idx_end == idx_start:
+            return price_start
+        slope = (price_end - price_start) / (idx_end - idx_start)
+        return price_start + slope * (idx_current - idx_start)
+
     def _check_pre_pole_trend(self, df, t0_idx, t1_idx, pole_height):
         """
         Проверяет, что перед T0 не было движения, которое аннулирует смысл флагштока.
@@ -453,12 +461,15 @@ class BearishFlagScanner:
                     quality = self._calculate_quality(pattern)
                     pattern['quality_score'] = quality
                     
-                    # Проверка свежести если нужно
-                    current_idx = len(df) - 1
-                    candles_after_t4 = current_idx - t4_idx
-                    
+                    # Если режим 'latest': паттерн актуален, пока цена внутри канала (не пробила 1-3 или 2-4)
                     if scan_type == 'latest':
-                        if candles_after_t4 > 3:
+                        current_idx = len(df) - 1
+                        current_close = float(df.iloc[current_idx]['close'])
+                        # Линия 1-3 (поддержка) и 2-4 (сопротивление) на текущем баре
+                        line_1_3 = self._line_price_at_idx(t1_idx, t1_price, t3_idx, t3_price, current_idx)
+                        line_2_4 = self._line_price_at_idx(t2_idx, t2_price, t4_idx, t4_price, current_idx)
+                        # Медвежий флаг: цена должна быть между 1-3 (низ) и 2-4 (верх)
+                        if current_close < line_1_3 or current_close > line_2_4:
                             continue
                     
                     found_patterns.append(pattern)

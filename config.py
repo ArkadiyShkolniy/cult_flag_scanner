@@ -1,6 +1,11 @@
 from t_tech.invest import CandleInterval
 
 TIMEFRAMES = {
+    '5m': {
+        'interval': CandleInterval.CANDLE_INTERVAL_5_MIN,
+        'days_back': 2,       # Для 5 мин — 2 дня
+        'title': '5 Минут'
+    },
     '1h': {
         'interval': CandleInterval.CANDLE_INTERVAL_HOUR,
         'days_back': 60,     # Для часа берем 2 месяца

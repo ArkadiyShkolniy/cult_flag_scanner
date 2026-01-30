@@ -1,4 +1,5 @@
 import time
+import threading
 import os
 import sys
 import io
@@ -12,6 +13,7 @@ import matplotlib.dates as mdates
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from t_tech.invest import Client, InstrumentIdType
+from t_tech.invest.utils import quotation_to_decimal
 
 import sys
 from pathlib import Path
@@ -51,7 +53,8 @@ def setup_logging(mode='debug'):
     
     return logging.getLogger(__name__)
 
-SCAN_INTERVAL = 60 * 10
+SCAN_INTERVAL = 60 * 5  # 5 мин (раньше 10) — чаще ловим окно входа
+POSITION_CHECK_INTERVAL = 15  # секунд — опрос GetLastPrices только по открытым позициям
 
 # Список фьючерсов для сканирования
 # Формат: {ticker, class_code, name}
@@ -74,6 +77,45 @@ FUTURES_TO_SCAN = [
     {'ticker': 'SIH6', 'class_code': 'SPBFUT', 'name': 'Серебро H6'},  # Март 2026
     {'ticker': 'SIM6', 'class_code': 'SPBFUT', 'name': 'Серебро M6'},  # Июнь 2026
 ]
+
+
+def fetch_last_prices_for_positions(token, trade_manager, logger):
+    """
+    Получает цены последних сделок по открытым позициям через GetLastPrices (реальное время).
+    Возвращает dict: {ticker: {'price': float, 'time': ...}} для вызова update_positions.
+    """
+    if not trade_manager or not getattr(trade_manager, 'active_trades', None) or not trade_manager.active_trades:
+        return {}
+    active = trade_manager.active_trades
+    uids = []
+    uid_to_ticker = {}
+    for ticker, trade in active.items():
+        uid = trade.get('uid')
+        if uid:
+            uids.append(uid)
+            uid_to_ticker[uid] = ticker
+    if not uids:
+        return {}
+    try:
+        with Client(token) as client:
+            response = client.market_data.get_last_prices(instrument_id=uids)
+        current_prices = {}
+        for lp in (response.last_prices or []):
+            ticker = uid_to_ticker.get(lp.instrument_uid)
+            if ticker is not None:
+                try:
+                    price_float = float(quotation_to_decimal(lp.price))
+                except Exception:
+                    continue
+                current_prices[ticker] = {
+                    'price': price_float,
+                    'time': lp.time if hasattr(lp, 'time') and lp.time else datetime.now(timezone.utc)
+                }
+        return current_prices
+    except Exception as e:
+        if logger:
+            logger.warning(f"   ⚠️ GetLastPrices для открытых позиций: {e}")
+        return {}
 
 
 def get_future_instrument(scanner, ticker, class_code):
@@ -110,7 +152,8 @@ def run_complex_flag_scanner():
     
     mode = args.mode
     is_prod = mode == 'prod'
-    scan_type = 'latest' if is_prod else 'all'
+    # Как в тестовом боте: сканируем всю историю, чтобы находить паттерны в момент их свежести
+    scan_type = 'all'
     entry_mode = args.entry_mode
     enable_trading = args.enable_trading
     
@@ -184,6 +227,23 @@ def run_complex_flag_scanner():
     # Кэш отправленных сигналов: ключ (ticker, timeframe, pattern_type) -> значение candle_time
     sent_signals_cache = {}
 
+    if enable_trading and trade_manager:
+        def _position_check_loop():
+            """Фоновый опрос GetLastPrices по открытым позициям каждые POSITION_CHECK_INTERVAL сек."""
+            while True:
+                time.sleep(POSITION_CHECK_INTERVAL)
+                try:
+                    current_prices = fetch_last_prices_for_positions(token, trade_manager, logger)
+                    if current_prices and trade_manager:
+                        trade_manager.update_positions(current_prices)
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"   ⚠️ Фоновый опрос позиций (GetLastPrices): {e}")
+
+        position_check_thread = threading.Thread(target=_position_check_loop, daemon=True)
+        position_check_thread.start()
+        logger.info(f"   📡 Фоновый опрос цен по открытым позициям каждые {POSITION_CHECK_INTERVAL} сек. (GetLastPrices)")
+
     while True:
         try:
             # Московское время (UTC+3)
@@ -209,6 +269,12 @@ def run_complex_flag_scanner():
             logger.info(f"   Всего инструментов для сканирования: {len(shares)} (фьючерсы отключены)")
             
             total_found_count = 0
+            
+            # Проверка открытых позиций: цены через GetLastPrices (реальное время), TP/SL, MFE/MAE
+            current_prices = fetch_last_prices_for_positions(token, trade_manager, logger)
+            if current_prices:
+                trade_manager.update_positions(current_prices)
+                logger.info(f"   📊 Проверка позиций: обновлено по {len(current_prices)} тикерам (GetLastPrices, TP/SL, MFE/MAE)")
             
             # Внешний цикл по таймфреймам
             for tf_name, tf_config in TIMEFRAMES.items():
@@ -356,39 +422,8 @@ def run_complex_flag_scanner():
                                     if t4_time:
                                         logger.info(f"      📅 Время T4: {t4_time}")
                                     
-                                    # ВАЖНО: В prod режиме входим только в свежие паттерны
-                                    # Используем динамическую логику, аналогичную TradeStrategy
-                                    if is_prod:
-                                        # Вычисляем длину паттерна
-                                        pattern_len = 20  # Default
-                                        try:
-                                            t0_idx = int(pattern_info['t0']['idx'])
-                                            pattern_len = max(5, t4_idx - t0_idx)
-                                        except:
-                                            pass
-                                        
-                                        # Допустимая задержка: 20% от длины, но от 2 до 12 свечей
-                                        # Мы даем небольшой запас (+2 свечи) относительно стратегии, 
-                                        # чтобы не отфильтровать пограничные случаи здесь
-                                        max_t4_age = min(14, max(4, int(pattern_len * 0.2) + 2))
-                                        
-                                        if t4_age > max_t4_age:
-                                            logger.warning(f"      ⏭️ Паттерн пропущен: T4 слишком старый (возраст {t4_age} свечей > {max_t4_age}, длина {pattern_len})")
-                                            continue
-                                    
-                                    # Дополнительная проверка по времени: T4 должен быть не старше 3 дней
-                                    if is_prod and t4_time:
-                                        # moscow_tz defined above at loop start
-                                        current_time = datetime.now(timezone.utc).astimezone(moscow_tz).replace(tzinfo=None)
-                                        time_diff = current_time - t4_time
-                                        if time_diff > timedelta(days=3):
-                                            logger.warning(f"      ⏭️ Паттерн пропущен: T4 слишком старый по времени (T4: {t4_time}, разница {time_diff.days} дней > 3 дней)")
-                                            continue
-                                    elif is_prod:
-                                        # Если нет времени T4, но мы в prod режиме - пропускаем паттерн (безопаснее)
-                                        logger.warning(f"      ⏭️ Паттерн пропущен: нет времени T4 для проверки свежести (prod режим)")
-                                        continue
-                                    
+                                    # Проверка свежести T4 отключена: prod ведёт себя как debug
+                                    # (раньше в prod отбрасывались паттерны по возрасту T4 в свечах и по 3 дням)
                                     # Проверка условий входа и открытие позиции (если торговля включена)
                                     logger.info(f"      ✅ Проверяем условия входа (T4 свежий: возраст {t4_age} свечей)...")
                                     
@@ -442,7 +477,7 @@ def run_complex_flag_scanner():
                                                 # Если active_mode не определен, используем ema_squeeze (так как Parallel Lines отключено)
                                                 final_entry_mode = active_mode if active_mode else 'ema_squeeze'
                                                 exit_levels = strategy.calculate_exit_levels(
-                                                    df, pattern, current_price, entry_mode=final_entry_mode
+                                                    df, pattern, current_price, entry_mode=final_entry_mode, timeframe=tf_name
                                                 )
                                                 
                                                 stop_loss = exit_levels['stop_loss']
@@ -600,7 +635,7 @@ def run_complex_flag_scanner():
                                                 # Если active_mode не определен, используем ema_squeeze (так как Parallel Lines отключено)
                                                 final_entry_mode = active_mode if active_mode else 'ema_squeeze'
                                                 exit_levels = strategy.calculate_exit_levels(
-                                                    df, pattern, current_price, entry_mode=final_entry_mode
+                                                    df, pattern, current_price, entry_mode=final_entry_mode, timeframe=tf_name
                                                 )
                                                 
                                                 stop_loss = exit_levels['stop_loss']

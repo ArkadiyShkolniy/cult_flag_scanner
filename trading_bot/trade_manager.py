@@ -1,11 +1,12 @@
 import json
 import os
+import uuid
 import joblib
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from t_tech.invest import Client, OrderDirection, OrderType
+from t_tech.invest import Client, OrderDirection, OrderType, InstrumentIdType
 from t_tech.invest.utils import quotation_to_decimal, decimal_to_quotation
 
 class TradeManager:
@@ -155,15 +156,24 @@ class TradeManager:
     def calculate_quantity(self, entry_price, stop_loss, instrument_uid):
         """
         Рассчитывает количество лотов.
+        - Если в конфиге задан fixed_lot_size > 0 — используется он (и в DEBUG, и в PROD).
+        - Иначе в DEBUG — 1 лот по умолчанию, в PROD — расчёт по риску (risk_amount / loss_per_lot).
         """
-        # В режиме отладки - фиксированный лот из конфига
-        if self.debug_mode:
-            config = self._load_json(self.config_file)
-            fixed_lot = int(config.get('fixed_lot_size', 1))
-            # Защита от дурака - минимум 1 лот
-            if fixed_lot < 1: fixed_lot = 1
-            return fixed_lot, self._get_lot_size(instrument_uid)
+        config = self._load_json(self.config_file)
+        fixed_lot = config.get('fixed_lot_size')
+        if fixed_lot is not None:
+            try:
+                n = int(fixed_lot)
+                if n > 0:
+                    return n, self._get_lot_size(instrument_uid)
+            except (TypeError, ValueError):
+                pass
 
+        # В режиме отладки без fixed_lot_size — по умолчанию 1 лот
+        if self.debug_mode:
+            return 1, self._get_lot_size(instrument_uid)
+
+        # PROD: расчёт по риску (даёт много лотов при большом портфеле/малом стопе)
         portfolio_value = self._get_portfolio_value()
         risk_amount = portfolio_value * self.risk_per_trade
         
@@ -281,7 +291,8 @@ class TradeManager:
         # Московское время (UTC+3)
         moscow_tz = timezone(timedelta(hours=3))
         moscow_time = datetime.now(timezone.utc).astimezone(moscow_tz)
-        order_id = "SIM_" + moscow_time.strftime("%H%M%S")
+        # Tinkoff API: order_id должен быть пустым или UUID
+        order_id = str(uuid.uuid4())
         trade_id = moscow_time.strftime("%Y%m%d_%H%M%S") + "_" + ticker
         
         # --- ML: Сохранение контекста (снэпшот) ---
@@ -299,61 +310,6 @@ class TradeManager:
                         json.dump(pattern_info, f, default=str, indent=2)
             except Exception as e:
                 self._log(f"⚠️ Ошибка сохранения снэпшота: {e}", 'warning')
-
-        if not self.dry_run:
-            # Реальная отправка заявки через Tinkoff Invest API
-            try:
-                self._log(f"   📤 ОТПРАВКА ЗАЯВКИ: {direction} {quantity_lots} лотов {ticker} по цене {price:.2f}")
-                
-                with Client(self.token) as client:
-                    # Определяем направление заявки
-                    order_direction = OrderDirection.ORDER_DIRECTION_BUY if direction == 'LONG' else OrderDirection.ORDER_DIRECTION_SELL
-                    
-                    # Тип заявки: рыночная (MARKET) - исполнение по текущей рыночной цене
-                    order_type = OrderType.ORDER_TYPE_MARKET
-                    
-                    # Количество в лотах
-                    quantity = quantity_lots
-                    
-                    # Получаем FIGI инструмента по UID
-                    instrument_info = client.instruments.get_instrument_by(
-                        id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID, 
-                        id=uid
-                    ).instrument
-                    figi = instrument_info.figi
-                    
-                    self._log(f"      Инструмент: {ticker}, FIGI: {figi}, UID: {uid}")
-                    
-                    # Отправляем заявку
-                    order_response = client.orders.post_order(
-                        account_id=self.account_id,
-                        figi=figi,
-                        quantity=quantity,
-                        price=None,  # Для рыночной заявки цена не нужна
-                        direction=order_direction,
-                        order_type=order_type,
-                        order_id=order_id  # Уникальный ID заявки
-                    )
-                    
-                    if order_response:
-                        self._log(f"      ✅ Заявка отправлена успешно! Order ID: {order_id}")
-                        # Сохраняем ID заявки в сделке
-                        trade['order_id'] = order_id
-                        trade['order_status'] = 'SUBMITTED'
-                    else:
-                        self._log(f"      ⚠️ Заявка отправлена, но ответ пустой", 'warning')
-                        trade['order_id'] = order_id
-                        trade['order_status'] = 'UNKNOWN'
-                        
-            except Exception as e:
-                self._log(f"      ❌ ОШИБКА отправки заявки: {e}", 'error')
-                import traceback
-                self._log(f"      {traceback.format_exc()}", 'error')
-                trade['order_id'] = None
-                trade['order_status'] = 'ERROR'
-                trade['order_error'] = str(e)
-        else:
-            self._log(f"   🧪 DRY RUN: Эмуляция открытия позиции (реальная заявка не отправляется)")
 
         trade = {
             'id': trade_id,
@@ -376,13 +332,57 @@ class TradeManager:
             'snapshot_file': snapshot_filename,
             'ai_probability': ai_prob
         }
-        
-        self.active_trades[ticker] = trade
-        self._save_active_trades()
-        
-        action = "🟢 КУПЛЕНО" if direction == 'LONG' else "🔴 ПРОДАНО"
-        mode_text = "DRY RUN" if self.dry_run else "РЕАЛЬНАЯ СДЕЛКА"
-        self._log(f"✅ {action} {quantity_lots} лотов {ticker}. {strategy_desc} [{mode_text}]")
+
+        if not self.dry_run:
+            # Реальная отправка заявки через Tinkoff Invest API
+            try:
+                self._log(f"   📤 ОТПРАВКА ЗАЯВКИ: {direction} {quantity_lots} лотов {ticker} по цене {price:.2f}")
+                with Client(self.token) as client:
+                    order_direction = OrderDirection.ORDER_DIRECTION_BUY if direction == 'LONG' else OrderDirection.ORDER_DIRECTION_SELL
+                    order_type = OrderType.ORDER_TYPE_MARKET
+                    quantity = quantity_lots
+                    instrument_info = client.instruments.get_instrument_by(
+                        id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
+                        id=uid
+                    ).instrument
+                    figi = instrument_info.figi
+                    self._log(f"      Инструмент: {ticker}, FIGI: {figi}, UID: {uid}")
+                    order_response = client.orders.post_order(
+                        account_id=self.account_id,
+                        figi=figi,
+                        quantity=quantity,
+                        price=None,
+                        direction=order_direction,
+                        order_type=order_type,
+                        order_id=order_id
+                    )
+                    if order_response:
+                        self._log(f"      ✅ Заявка отправлена успешно! Order ID: {order_id}")
+                        trade['order_id'] = order_id
+                        trade['order_status'] = 'SUBMITTED'
+                    else:
+                        self._log(f"      ⚠️ Заявка отправлена, но ответ пустой", 'warning')
+                        trade['order_id'] = order_id
+                        trade['order_status'] = 'UNKNOWN'
+            except Exception as e:
+                self._log(f"      ❌ ОШИБКА отправки заявки: {e}", 'error')
+                import traceback
+                self._log(f"      {traceback.format_exc()}", 'error')
+                trade['order_id'] = None
+                trade['order_status'] = 'ERROR'
+                trade['order_error'] = str(e)
+        else:
+            self._log(f"   🧪 DRY RUN: Эмуляция открытия позиции (реальная заявка не отправляется)")
+
+        # В active_trades добавляем только при успешной заявке или в dry_run (иначе на счете нет позиции, а в боте — есть)
+        if self.dry_run or trade.get('order_status') in ('SUBMITTED', 'UNKNOWN'):
+            self.active_trades[ticker] = trade
+            self._save_active_trades()
+            action = "🟢 КУПЛЕНО" if direction == 'LONG' else "🔴 ПРОДАНО"
+            mode_text = "DRY RUN" if self.dry_run else "РЕАЛЬНАЯ СДЕЛКА"
+            self._log(f"✅ {action} {quantity_lots} лотов {ticker}. {strategy_desc} [{mode_text}]")
+        else:
+            self._log(f"   ⚠️ Позиция НЕ добавлена в active_trades: заявка не исполнена (order_status={trade.get('order_status', 'ERROR')}). На реальном счёте позиции нет.", 'warning')
 
     def update_positions(self, current_prices):
         """
@@ -450,12 +450,20 @@ class TradeManager:
             self.print_statistics()
 
     def _close_position(self, ticker, trade, exit_price, reason, exit_time):
-        quantity = trade['quantity_lots']
-        lot_size = trade['lot_size']
+        quantity = trade.get('quantity_lots')
+        lot_size = trade.get('lot_size')
+        if quantity is None or (isinstance(quantity, (int, float)) and quantity <= 0):
+            self._log(f"   ⚠️ quantity_lots отсутствует или ≤ 0 ({quantity}), используем 1", 'warning')
+            quantity = 1
+        if lot_size is None or (isinstance(lot_size, (int, float)) and lot_size <= 0):
+            self._log(f"   ⚠️ lot_size отсутствует или ≤ 0 ({lot_size}), используем 1", 'warning')
+            lot_size = 1
+        quantity = int(quantity)
+        lot_size = int(lot_size)
         entry_price = trade['entry_price']
         direction = trade['direction']
         
-        # Расчет финансов
+        # Расчет финансов: объём в штуках = лоты × размер лота
         position_value_exit = exit_price * quantity * lot_size
         commission_exit = position_value_exit * self.commission_rate
         total_commission = trade['commission_entry'] + commission_exit
@@ -476,14 +484,40 @@ class TradeManager:
         self._log(f"   MFE: {trade.get('mfe', 0):.2f} | MAE: {trade.get('mae', 0):.2f}")
         
         if not self.dry_run:
-            self._log(f"   📤 ОТПРАВКА ЗАЯВКИ НА ЗАКРЫТИЕ: {direction} {quantity_lots} лотов {ticker} по цене {exit_price:.2f}")
-            self._log(f"      ⚠️ ВНИМАНИЕ: Реальная отправка заявок пока не реализована (TODO)")
+            # Реальная заявка на закрытие: LONG закрываем продажей, SHORT — покупкой
+            try:
+                uid = trade.get('uid')
+                if not uid:
+                    self._log(f"      ❌ ОШИБКА: в сделке нет uid, закрытие на бирже невозможно", 'error')
+                else:
+                    close_direction = OrderDirection.ORDER_DIRECTION_SELL if direction == 'LONG' else OrderDirection.ORDER_DIRECTION_BUY
+                    self._log(f"   📤 ОТПРАВКА ЗАЯВКИ НА ЗАКРЫТИЕ: {'SELL' if direction == 'LONG' else 'BUY'} {quantity} лотов {ticker} (рынок)")
+                    with Client(self.token) as client:
+                        instrument_info = client.instruments.get_instrument_by(
+                            id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
+                            id=uid
+                        ).instrument
+                        figi = instrument_info.figi
+                        close_order_id = str(uuid.uuid4())
+                        order_response = client.orders.post_order(
+                            account_id=self.account_id,
+                            figi=figi,
+                            quantity=quantity,
+                            price=None,
+                            direction=close_direction,
+                            order_type=OrderType.ORDER_TYPE_MARKET,
+                            order_id=close_order_id
+                        )
+                        if order_response:
+                            self._log(f"      ✅ Заявка на закрытие отправлена. Order ID: {close_order_id}")
+                        else:
+                            self._log(f"      ⚠️ Заявка на закрытие отправлена, но ответ пустой", 'warning')
+            except Exception as e:
+                self._log(f"      ❌ ОШИБКА отправки заявки на закрытие: {e}", 'error')
+                import traceback
+                self._log(traceback.format_exc(), 'error')
         else:
             self._log(f"   🧪 DRY RUN: Эмуляция закрытия позиции (реальная заявка не отправляется)")
-        
-        if not self.dry_run:
-            # TODO: Отправка ордера
-            pass
 
         # Финализация записи
         trade['exit_time'] = str(exit_time)

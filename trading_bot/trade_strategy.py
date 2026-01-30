@@ -80,12 +80,9 @@ class TradeStrategy:
                 except:
                     pass
             
-            # Логика свежести:
-            # Разрешаем задержку не более 20% от длины паттерна
-            # Жесткие рамки: минимум 2 свечи, максимум 12 свечей
-            # Для часового паттерна длиной 48 часов (2 дня) -> допустимо ~9 часов задержки
-            # Для пятиминутного длиной 24 свечи (2 часа) -> допустимо ~4 свечи (20 минут)
-            max_allowed_delay = min(12, max(2, int(pattern_len * 0.2)))
+            # Логика свежести: как в тестовом боте — мягче, чтобы прод тоже мог входить
+            # 20% от длины + 2 свечи, минимум 4, максимум 30 свечей (раньше было 12)
+            max_allowed_delay = min(30, max(4, int(pattern_len * 0.2) + 2))
             
             if bars_since_t4 > max_allowed_delay:
                 return False, f"Паттерн устарел (прошло {bars_since_t4} свечей, max: {max_allowed_delay} для длины {pattern_len})"
@@ -177,7 +174,7 @@ class TradeStrategy:
             return True, f"SIGNAL SHORT: Price {close_price:.2f} зажата между EMA7 ({ema7:.2f}) и Линией 1-3 ({line_1_3_price:.2f})"
 
 
-    def calculate_exit_levels(self, df: pd.DataFrame, pattern: dict, entry_price: float, entry_mode: str = "ema_squeeze"):
+    def calculate_exit_levels(self, df: pd.DataFrame, pattern: dict, entry_price: float, entry_mode: str = "ema_squeeze", timeframe: str = "5m"):
         """
         Рассчитывает уровни Stop Loss и Take Profit.
         
@@ -186,6 +183,7 @@ class TradeStrategy:
             pattern: Словарь паттерна (нужен для T0/T1)
             entry_price: Цена входа
             entry_mode: Режим входа (всегда "ema_squeeze")
+            timeframe: Таймфрейм — от него зависит отступ стопа за EMA: 5m 0.1%, 1h 0.3%, 1d 0.5%
             
         Returns:
             dict: {'stop_loss': float, 'take_profit': float}
@@ -196,40 +194,53 @@ class TradeStrategy:
         # EMA14 текущей свечи для стопа (используется для ema_squeeze)
         current_ema14 = df.iloc[-1]['ema_14']
         
-        # Координаты T4 для параллельного входа
-        t4_price = pattern['t4']['price']
+        # Отступ стопа за EMA по таймфрейму: 5m 0.1%, 1h 0.3%, 1d 0.5%
+        tf_lower = (timeframe or "5m").lower()
+        if "1d" in tf_lower or "1д" in tf_lower:
+            sl_pct = 0.005   # 0.5%
+        elif "1h" in tf_lower or "1ч" in tf_lower:
+            sl_pct = 0.003   # 0.3%
+        else:
+            sl_pct = 0.001   # 0.1% (5m и по умолчанию)
+        
+        # Высота между T1 и T2 (размах флагштока)
+        t1_price = pattern['t1']['price']
+        t2_price = pattern['t2']['price']
+        height_t1_t2 = abs(t1_price - t2_price)
         
         if is_bullish:
             # --- LONG ---
+            stop_loss = current_ema14 * (1 - sl_pct)
+            desc_sl = f"SL: EMA14-{sl_pct*100:.1f}% ({stop_loss:.2f})"
             
-            # Для EMA Squeeze стоп за EMA 14
-            stop_loss = current_ema14 * 0.999
-            desc_sl = f"SL: EMA14-0.1% ({stop_loss:.2f})"
-            
-            # Take Profit: Цель - T1 (вершина флагштока для Long)
-            # В нотации пользователя T0 -> T1 это движение флагштока.
-            # Для Long: T0 - минимум, T1 - максимум. Цель - вернуться к T1.
-            take_profit = pattern['t1']['price']
+            # TP = высота T1–T2 от входа вверх, но минимум 2× расстояние до стопа
+            sl_distance = entry_price - stop_loss
+            if sl_distance <= 0:
+                sl_distance = entry_price * 0.01  # запас, если SL выше входа
+            tp_distance = max(height_t1_t2, 2.0 * sl_distance)
+            take_profit = entry_price + tp_distance
             
             return {
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
-                'desc': f"{desc_sl}, TP: T1 ({take_profit:.2f})"
+                'desc': f"{desc_sl}, TP: вход+{tp_distance:.2f} (высота T1–T2, мин 2×SL)"
             }
             
         else:
             # --- SHORT ---
+            stop_loss = current_ema14 * (1 + sl_pct)
+            desc_sl = f"SL: EMA14+{sl_pct*100:.1f}% ({stop_loss:.2f})"
             
-            # Для EMA Squeeze стоп за EMA 14
-            stop_loss = current_ema14 * 1.001
-            desc_sl = f"SL: EMA14+0.1% ({stop_loss:.2f})"
-            
-            # Take Profit: Цель - T1 (дно флагштока)
-            take_profit = pattern['t1']['price']
+            # TP = высота T1–T2 от входа вниз, но минимум 2× расстояние до стопа
+            sl_distance = stop_loss - entry_price
+            if sl_distance <= 0:
+                sl_distance = entry_price * 0.01
+            tp_distance = max(height_t1_t2, 2.0 * sl_distance)
+            take_profit = entry_price - tp_distance
             
             return {
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
-                'desc': f"{desc_sl}, TP: T1 ({take_profit:.2f})"
+                'desc': f"{desc_sl}, TP: вход-{tp_distance:.2f} (высота T1–T2, мин 2×SL)"
             }
 

@@ -583,16 +583,16 @@ def main():
     # --- SIDEBAR SETTINGS ---
     st.sidebar.header("⚙️ Настройки торговли")
     
-    # Load config
+    # Load config (тот же файл читает бот: trading_bot/trading_config.json или trading_bot/data_prod/trading_config.json)
     config_file = BASE_DIR / "trading_config.json"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
     trading_config = {}
     if config_file.exists():
         try:
             with open(config_file, 'r') as f:
                 trading_config = json.load(f)
-        except:
+        except Exception:
             pass
-            
     current_lot = int(trading_config.get('fixed_lot_size', 1))
     
     new_lot = st.sidebar.number_input(
@@ -601,14 +601,30 @@ def main():
         max_value=100, 
         value=current_lot,
         step=1,
-        help="Количество лотов для каждой сделки"
+        help="Количество лотов для каждой сделки. Сохраните — бот применит при следующем входе.",
+        key="fixed_lot_input"
     )
     
-    if new_lot != current_lot:
+    # Сохраняем при изменении или если конфига ещё нет (чтобы бот точно видел настройку)
+    if new_lot != current_lot or not config_file.exists() or trading_config.get('fixed_lot_size') is None:
         trading_config['fixed_lot_size'] = new_lot
-        with open(config_file, 'w') as f:
-            json.dump(trading_config, f, indent=4)
-        st.sidebar.success(f"✅ Лоты обновлены: {new_lot}")
+        try:
+            with open(config_file, 'w') as f:
+                json.dump(trading_config, f, indent=4)
+            if new_lot != current_lot:
+                st.sidebar.success(f"✅ Лоты сохранены: {new_lot}. Бот применит при следующей сделке.")
+        except Exception as e:
+            st.sidebar.error(f"Не удалось сохранить конфиг: {e}")
+    
+    if st.sidebar.button("💾 Сохранить настройки лотов", key="save_lot_config"):
+        trading_config['fixed_lot_size'] = new_lot
+        try:
+            with open(config_file, 'w') as f:
+                json.dump(trading_config, f, indent=4)
+            st.sidebar.success(f"✅ Сохранено: {new_lot} лот(ов). Бот читает: {config_file.name}")
+        except Exception as e:
+            st.sidebar.error(f"Ошибка: {e}")
+        st.rerun()
     
     # --- ЛОГИ РОБОТА ---
     st.sidebar.divider()
@@ -1008,17 +1024,30 @@ def main():
                                 fig = create_trade_chart(df_snapshot, pattern_info, trade_data)
                                 
                                 # Информация о сделке
+                                qty = int(selected_trade.get('quantity_lots', 1))
+                                lot_sz = int(selected_trade.get('lot_size', 1))
+                                vol = qty * lot_sz
+                                entry_p = selected_trade.get('entry_price') or 0
+                                exit_p = selected_trade.get('exit_price') or 0
+                                gross = selected_trade.get('gross_profit', 0)
+                                net = selected_trade.get('net_profit', 0)
+                                comm = selected_trade.get('commission_total', 0)
                                 col1, col2, col3 = st.columns(3)
                                 with col1:
-                                    st.metric("P&L", f"{selected_trade['net_profit']:.2f} ₽", 
-                                            delta=f"{selected_trade.get('gross_profit', 0):.2f} ₽ (брутто)")
+                                    st.metric("P&L (нетто)", f"{net:.2f} ₽", delta=f"{gross:.2f} ₽ (брутто)")
+                                    st.caption(f"Комиссия: {comm:.2f} ₽")
                                 with col2:
-                                    st.metric("Вход", f"{selected_trade.get('entry_price', 0):.2f} ₽")
-                                    if selected_trade.get('exit_price'):
-                                        st.metric("Выход", f"{selected_trade.get('exit_price', 0):.2f} ₽")
+                                    st.metric("Вход", f"{entry_p:.2f} ₽")
+                                    if exit_p:
+                                        st.metric("Выход", f"{exit_p:.2f} ₽")
+                                    st.caption(f"Объём: {vol} шт. ({qty} лотов × {lot_sz})")
                                 with col3:
-                                    st.metric("MFE", f"{selected_trade.get('mfe', 0):.2f}")
-                                    st.metric("MAE", f"{selected_trade.get('mae', 0):.2f}")
+                                    st.metric("MFE (руб/шт.)", f"{selected_trade.get('mfe', 0):.2f}")
+                                    st.metric("MAE (руб/шт.)", f"{selected_trade.get('mae', 0):.2f}")
+                                # Формула для проверки: брутто = (выход − вход) × объём, нетто = брутто − комиссия
+                                if entry_p and exit_p and vol:
+                                    expected_gross = (exit_p - entry_p) * vol if (selected_trade.get('direction') or '').upper() == 'LONG' else (entry_p - exit_p) * vol
+                                    st.caption(f"Проверка: (Выход − Вход) × {vol} = {expected_gross:.2f} ₽ брутто → нетто = {expected_gross:.2f} − {comm:.2f} = {expected_gross - comm:.2f} ₽")
                                 
                                 st.plotly_chart(fig, use_container_width=True, width='stretch')
                                 
