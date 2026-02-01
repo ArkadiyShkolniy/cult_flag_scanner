@@ -800,8 +800,9 @@ def main():
                     importlib.reload(trading_bot.trade_manager)
                     from trading_bot.trade_manager import TradeManager
                     
-                    # Используем тот же data_dir, что и дашборд
-                    manager = TradeManager(token, dry_run=True, debug_mode=True, data_dir=DATA_DIR_PATH)
+                    # Используем тот же data_dir, что и дашборд; в PROD — реальные заявки на закрытие
+                    is_prod = (os.environ.get("BOT_ENV") == "PROD") or ("data_prod" in DATA_DIR_PATH)
+                    manager = TradeManager(token, dry_run=not is_prod, debug_mode=not is_prod, data_dir=DATA_DIR_PATH)
                     
                     # Используем метод close_all_positions, который правильно обрабатывает все
                     manager.close_all_positions(current_prices)
@@ -1072,7 +1073,7 @@ def main():
             st.subheader("📈 Кривая доходности")
             if history_trades and total_trades > 0:
                 df_history = pd.DataFrame(history_trades)
-                df_history['exit_time'] = pd.to_datetime(df_history['exit_time'], format='ISO8601', errors='coerce')
+                df_history['exit_time'] = pd.to_datetime(df_history['exit_time'], utc=True, errors='coerce')
                 df_history = df_history.sort_values('exit_time')
                 df_history['cumulative_pnl'] = df_history['net_profit'].cumsum()
                 

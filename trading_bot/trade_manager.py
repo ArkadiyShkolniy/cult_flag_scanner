@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import uuid
 import joblib
 import pandas as pd
@@ -112,9 +113,54 @@ class TradeManager:
         with open(self.trades_file, 'w') as f:
             json.dump(self.active_trades, f, indent=4, default=str)
 
+    def reload_active_trades_from_file(self):
+        """Перезагружает active_trades из файла (учёт закрытий из дашборда)."""
+        self.active_trades = self._load_json(self.trades_file, is_dict=True)
+
     def _save_history(self):
         with open(self.history_file, 'w') as f:
             json.dump(self.closed_trades, f, indent=4, default=str)
+
+    def _money_value_to_float(self, mv):
+        """Конвертирует MoneyValue (units, nano) в float. Для цены исполнения заявки."""
+        if mv is None:
+            return None
+        u = getattr(mv, 'units', 0) or 0
+        n = getattr(mv, 'nano', 0) or 0
+        return float(u) + float(n) / 1e9
+
+    def _get_order_executed_price(self, client, exchange_order_id, quantity_lots, lot_size):
+        """
+        Получает цену исполнения заявки через GetOrderState (опрос после отправки).
+        Returns: цена за 1 инструмент (float) или None.
+        OrderState.average_position_price — средняя цена позиции по сделке (за 1 шт).
+        """
+        if not exchange_order_id:
+            return None
+        try:
+            time.sleep(2)
+            state = client.orders.get_order_state(
+                account_id=self.account_id,
+                order_id=exchange_order_id
+            )
+            if not state:
+                return None
+            # EXECUTION_REPORT_STATUS_FILL = 1
+            if getattr(state, 'execution_report_status', None) != 1:
+                return None
+            # average_position_price — средняя цена за 1 инструмент
+            ap = getattr(state, 'average_position_price', None)
+            if ap:
+                return self._money_value_to_float(ap)
+            # fallback: executed_order_price / (lots * lot_size) — полная сумма / кол-во штук
+            ep = getattr(state, 'executed_order_price', None)
+            if ep and quantity_lots and lot_size:
+                total = self._money_value_to_float(ep)
+                if total and total > 0:
+                    return total / (quantity_lots * lot_size)
+        except Exception as e:
+            self._log(f"      ⚠️ Не удалось получить цену исполнения: {e}", 'warning')
+        return None
 
     def _fetch_account_id(self):
         """Получает ID первого брокерского счета"""
@@ -360,6 +406,16 @@ class TradeManager:
                         self._log(f"      ✅ Заявка отправлена успешно! Order ID: {order_id}")
                         trade['order_id'] = order_id
                         trade['order_status'] = 'SUBMITTED'
+                        # Цена исполнения для точного P/L: из ответа или GetOrderState
+                        entry_exec_price = None
+                        if getattr(order_response, 'execution_report_status', None) == 1 and getattr(order_response, 'executed_order_price', None):
+                            entry_exec_price = self._money_value_to_float(order_response.executed_order_price)
+                        if not entry_exec_price:
+                            exchange_order_id = getattr(order_response, 'order_id', None)
+                            entry_exec_price = self._get_order_executed_price(client, exchange_order_id, quantity_lots, lot_size)
+                        if entry_exec_price:
+                            trade['entry_executed_price'] = entry_exec_price
+                            self._log(f"      📊 Цена исполнения входа: {entry_exec_price:.2f}")
                     else:
                         self._log(f"      ⚠️ Заявка отправлена, но ответ пустой", 'warning')
                         trade['order_id'] = order_id
@@ -462,27 +518,8 @@ class TradeManager:
         lot_size = int(lot_size)
         entry_price = trade['entry_price']
         direction = trade['direction']
-        
-        # Расчет финансов: объём в штуках = лоты × размер лота
-        position_value_exit = exit_price * quantity * lot_size
-        commission_exit = position_value_exit * self.commission_rate
-        total_commission = trade['commission_entry'] + commission_exit
-        
-        if direction == 'LONG':
-            gross_profit = (exit_price - entry_price) * quantity * lot_size
-        else: # SHORT
-            gross_profit = (entry_price - exit_price) * quantity * lot_size
-            
-        net_profit = gross_profit - total_commission
-        
-        self._log(f"\n⚖️ ЗАКРЫТИЕ ПОЗИЦИИ {ticker} ({direction})")
-        self._log(f"   Причина: {reason}")
-        self._log(f"   Вход: {entry_price:.2f} -> Выход: {exit_price:.2f}")
-        self._log(f"   P&L (грязный): {gross_profit:.2f} руб.")
-        self._log(f"   Комиссия: {total_commission:.2f} руб.")
-        self._log(f"   P&L (чистый): {net_profit:.2f} руб.")
-        self._log(f"   MFE: {trade.get('mfe', 0):.2f} | MAE: {trade.get('mae', 0):.2f}")
-        
+        exit_executed_price = None
+
         if not self.dry_run:
             # Реальная заявка на закрытие: LONG закрываем продажей, SHORT — покупкой
             try:
@@ -510,6 +547,14 @@ class TradeManager:
                         )
                         if order_response:
                             self._log(f"      ✅ Заявка на закрытие отправлена. Order ID: {close_order_id}")
+                            # Цена исполнения закрытия для точного P/L (executed_order_price — за 1 инструмент)
+                            if getattr(order_response, 'execution_report_status', None) == 1 and getattr(order_response, 'executed_order_price', None):
+                                exit_executed_price = self._money_value_to_float(order_response.executed_order_price)
+                            if not exit_executed_price:
+                                exchange_order_id = getattr(order_response, 'order_id', None)
+                                exit_executed_price = self._get_order_executed_price(client, exchange_order_id, quantity, lot_size)
+                            if exit_executed_price:
+                                self._log(f"      📊 Цена исполнения выхода: {exit_executed_price:.2f}")
                         else:
                             self._log(f"      ⚠️ Заявка на закрытие отправлена, но ответ пустой", 'warning')
             except Exception as e:
@@ -519,9 +564,32 @@ class TradeManager:
         else:
             self._log(f"   🧪 DRY RUN: Эмуляция закрытия позиции (реальная заявка не отправляется)")
 
+        # Цены для P/L: приоритет — реальные цены исполнения
+        entry_used = trade.get('entry_executed_price') or entry_price
+        exit_used = exit_executed_price or exit_price
+        # Расчет финансов по фактическим ценам исполнения (или сигнальным)
+        position_value_exit = exit_used * quantity * lot_size
+        commission_exit = position_value_exit * self.commission_rate
+        total_commission = trade['commission_entry'] + commission_exit
+        if direction == 'LONG':
+            gross_profit = (exit_used - entry_used) * quantity * lot_size
+        else:
+            gross_profit = (entry_used - exit_used) * quantity * lot_size
+        net_profit = gross_profit - total_commission
+
+        self._log(f"\n⚖️ ЗАКРЫТИЕ ПОЗИЦИИ {ticker} ({direction})")
+        self._log(f"   Причина: {reason}")
+        self._log(f"   Вход: {entry_used:.2f} -> Выход: {exit_used:.2f}" + (" (исполн.)" if exit_executed_price else ""))
+        self._log(f"   P&L (грязный): {gross_profit:.2f} руб.")
+        self._log(f"   Комиссия: {total_commission:.2f} руб.")
+        self._log(f"   P&L (чистый): {net_profit:.2f} руб.")
+        self._log(f"   MFE: {trade.get('mfe', 0):.2f} | MAE: {trade.get('mae', 0):.2f}")
+
         # Финализация записи
         trade['exit_time'] = str(exit_time)
-        trade['exit_price'] = exit_price
+        trade['exit_price'] = exit_used
+        if exit_executed_price is not None:
+            trade['exit_executed_price'] = exit_executed_price
         trade['status'] = 'CLOSED'
         trade['close_reason'] = reason
         trade['gross_profit'] = gross_profit
@@ -546,10 +614,12 @@ class TradeManager:
             hold_time_minutes = (exit_dt - entry_dt).total_seconds() / 60
             result_type = "WIN" if net_profit > 0 else "LOSS"
             
+            entry_for_ml = trade.get('entry_executed_price') or trade['entry_price']
+            exit_for_ml = trade['exit_price']
             with open(self.dataset_file, 'a') as f:
                 # trade_id,ticker,direction,entry_time,exit_time,entry_price,exit_price,pnl_net,result_type,mae,mfe,hold_time_minutes,stop_loss,take_profit,pattern_score,snapshot_file,ai_probability
                 f.write(f"{trade['id']},{ticker},{direction},{trade['entry_time']},{trade['exit_time']},"
-                        f"{entry_price},{exit_price},{net_profit:.2f},{result_type},"
+                        f"{entry_for_ml},{exit_for_ml},{net_profit:.2f},{result_type},"
                         f"{trade.get('mae', 0):.2f},{trade.get('mfe', 0):.2f},{hold_time_minutes:.1f},"
                         f"{trade['stop_loss']},{trade['take_profit']},0,{trade['snapshot_file']},"
                         f"{trade.get('ai_probability', 0):.4f}\n")

@@ -233,6 +233,7 @@ def run_complex_flag_scanner():
             while True:
                 time.sleep(POSITION_CHECK_INTERVAL)
                 try:
+                    trade_manager.reload_active_trades_from_file()
                     current_prices = fetch_last_prices_for_positions(token, trade_manager, logger)
                     if current_prices and trade_manager:
                         trade_manager.update_positions(current_prices)
@@ -246,6 +247,9 @@ def run_complex_flag_scanner():
 
     while True:
         try:
+            # Перезагрузка активных сделок из файла (чтобы учесть закрытия из дашборда)
+            if trade_manager:
+                trade_manager.reload_active_trades_from_file()
             # Московское время (UTC+3)
             moscow_tz = timezone(timedelta(hours=3))
             moscow_time = datetime.now(timezone.utc).astimezone(moscow_tz)
